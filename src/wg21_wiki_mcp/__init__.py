@@ -6,4 +6,4 @@ source of truth: every result is exact wiki content with a clickable URL and
 revision id. See ``ARCHITECTURE.md`` for the design and ``README.md`` for usage.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

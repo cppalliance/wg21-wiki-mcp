@@ -17,7 +17,11 @@ from datetime import date, datetime, timedelta, timezone
 import requests
 
 from .config import Config
+from .log import get_logger
+from .log_safety import safe_exception_summary
 from .models import CalendarStatus
+
+logger = get_logger("meetings")
 
 PUBLIC_MEETINGS_URL = "https://isocpp.org/std/meetings-and-participation/upcoming-meetings"
 
@@ -78,6 +82,8 @@ class MeetingCalendar:
         self._windows: list[tuple[date, date]] = []
         self._last_fetched: datetime | None = None
         self._parse_status: str = "failed"
+        self._owns_session = session is None
+        self._closed = False
 
     def _today(self) -> date:
         return datetime.now(timezone.utc).date()
@@ -85,6 +91,8 @@ class MeetingCalendar:
     def ensure_fresh(self) -> None:
         """Refresh the calendar at most once per day."""
         with self._lock:
+            if self._closed:
+                return
             now = datetime.now(timezone.utc)
             if self._last_fetched is not None and now - self._last_fetched < _REFRESH_INTERVAL:
                 return
@@ -93,7 +101,11 @@ class MeetingCalendar:
                 resp.raise_for_status()
                 self._windows = parse_meeting_windows(resp.text)
                 self._parse_status = "ok" if self._windows else "partial"
-            except Exception:  # noqa: BLE001 - network/parse failure -> conservative
+            except Exception as exc:  # noqa: BLE001 - network/parse failure -> conservative
+                logger.warning(
+                    "Calendar fetch/parse failed: %s",
+                    safe_exception_summary(exc),
+                )
                 self._parse_status = "failed"
             finally:
                 self._last_fetched = now
@@ -130,6 +142,22 @@ class MeetingCalendar:
             return "conservative"
         return "meeting" if self.is_meeting_active(when) else "normal"
 
+    def window_for_meeting_title(self, title: str) -> tuple[str | None, str | None]:
+        """Map a ``YYYY-MM Location`` meeting title to public-calendar ISO dates.
+
+        Matches on the title's year-month prefix against each window's start date.
+        Returns ``(None, None)`` when no window is known for that prefix.
+        """
+        if len(title) < 7 or title[4] != "-":
+            return None, None
+        ym_prefix = title[:7]
+        self.ensure_fresh()
+        windows, _ = self._effective_windows()
+        for start, end in windows:
+            if start.strftime("%Y-%m") == ym_prefix:
+                return start.isoformat(), end.isoformat()
+        return None, None
+
     def status(self) -> CalendarStatus:
         """Return the calendar's parse status and current meeting-window state."""
         self.ensure_fresh()
@@ -141,3 +169,12 @@ class MeetingCalendar:
             in_meeting_window_now=self.is_meeting_active(),
             windows=[f"{s.isoformat()}/{e.isoformat()}" for s, e in windows],
         )
+
+    def close(self) -> None:
+        """Close the HTTP session when this calendar owns it."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._owns_session and hasattr(self._session, "close"):
+                self._session.close()

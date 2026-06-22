@@ -73,6 +73,9 @@ class Cache:
         self.db_path = cache_dir / "cache.sqlite"
         self._local = threading.local()
         self._write_lock = threading.Lock()
+        self._all_conns: list[sqlite3.Connection] = []
+        self._all_conns_lock = threading.Lock()
+        self._closed = False
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA synchronous=NORMAL;")
@@ -80,12 +83,44 @@ class Cache:
 
     def _connect(self) -> sqlite3.Connection:
         """Return this thread's SQLite connection, opening one on first use."""
+        if self._closed:
+            raise RuntimeError("Cache is closed")
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(self.db_path, timeout=30, isolation_level=None)
+            conn = sqlite3.connect(
+                self.db_path,
+                timeout=30,
+                isolation_level=None,
+                check_same_thread=False,
+            )
             conn.row_factory = sqlite3.Row
+            with self._all_conns_lock:
+                if self._closed:
+                    conn.close()
+                    raise RuntimeError("Cache is closed")
+                self._all_conns.append(conn)
             self._local.conn = conn
         return conn
+
+    def close(self) -> None:
+        """Close all thread-local SQLite connections opened by this cache."""
+        if self._closed:
+            return
+        self._closed = True
+        with self._all_conns_lock:
+            for conn in self._all_conns:
+                conn.close()
+            self._all_conns.clear()
+        if hasattr(self._local, "conn"):
+            del self._local.conn
+
+    def __enter__(self) -> Cache:
+        """Enter a context that closes this cache on exit."""
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        """Close the cache when leaving the context."""
+        self.close()
 
     def get(self, requested_title: str) -> CacheEntry | None:
         """Return the cached entry for ``requested_title``, or None if absent."""

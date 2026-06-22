@@ -23,6 +23,7 @@ import mwclient
 from mwclient.errors import APIError, MwClientError
 
 from .config import Config, Credentials
+from .log_safety import auth_path_failure_label, summarize_auth_failures
 from .models import AuthError, FetchError
 
 _AUTH_ERROR_CODES = frozenset({"readapidenied", "assertuserfailed", "notloggedin", "badtoken"})
@@ -62,6 +63,11 @@ class WikiClient:
         self._site: mwclient.Site | None = None
         self._active: Credentials | None = None
         self._lock = threading.RLock()
+        self._closed = False
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("WikiClient is closed")
 
     # -- properties ---------------------------------------------------------
     @property
@@ -80,17 +86,19 @@ class WikiClient:
 
         Raises:
             AuthError: if no configured credential path can log in.
+            RuntimeError: if the client has been closed.
         """
         with self._lock:
-            errors: list[str] = []
+            self._require_open()
+            path_failures: list[str] = []
             for cred in self._config.ordered_credentials:
                 try:
                     self._login_with(cred)
                     self._active = cred
                     return
                 except Exception as exc:  # noqa: BLE001 - record and try next path
-                    errors.append(f"{cred.label}: {type(exc).__name__}: {exc}")
-            raise AuthError("All configured credential paths failed: " + "; ".join(errors))
+                    path_failures.append(auth_path_failure_label(cred.label, exc))
+            raise AuthError(summarize_auth_failures(path_failures))
 
     def _relogin(self) -> None:
         """Re-run only the pinned credential path (no re-probing)."""
@@ -198,6 +206,7 @@ class WikiClient:
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES):
             with self._lock:
+                self._require_open()
                 if self._site is None:
                     self.login()
                 assert self._site is not None  # login() sets the site or raises
@@ -217,7 +226,9 @@ class WikiClient:
                     last_exc = exc
                     time.sleep(min(2**attempt, 30))
                     continue
-        raise FetchError(f"API call '{action}' failed after {_MAX_RETRIES} retries: {last_exc}")
+        if isinstance(last_exc, APIError) and last_exc.code in _AUTH_ERROR_CODES:
+            raise AuthError(f"Session could not be re-established after {_MAX_RETRIES} attempts.") from last_exc
+        raise FetchError(f"API call '{action}' failed after {_MAX_RETRIES} retries.") from last_exc
 
     # -- URL helpers --------------------------------------------------------
     def canonical_url(self, title: str) -> str:
@@ -295,6 +306,20 @@ class WikiClient:
             )
         return out
 
+    def fetch_page_section(self, title: str, section: int) -> FetchedPage:
+        """Fetch one section's verbatim wikitext (server-side ``rvsection`` split)."""
+        resp = self.api(
+            "query",
+            titles=title,
+            prop="revisions",
+            rvprop="ids|timestamp|size|content",
+            rvslots="main",
+            rvsection=section,
+            redirects=1,
+        )
+        mapped = self._map_batch([title], resp.get("query", {}))
+        return mapped.get(title) or FetchedPage(title, title, None, None, None, None, None, True)
+
     def page_revisions(self, titles: list[str]) -> dict[str, int | None]:
         """Cheaply fetch current revids (for cache revalidation)."""
         out: dict[str, int | None] = {}
@@ -361,3 +386,16 @@ class WikiClient:
     def statistics(self) -> dict:
         """Return the wiki's ``siteinfo`` statistics as the raw response."""
         return self.api("query", meta="siteinfo", siprop="statistics")
+
+    def close(self) -> None:
+        """Close the underlying HTTP session and release the site handle."""
+        if self._closed:
+            return
+        with self._lock:
+            try:
+                if self._site is not None:
+                    self._site.connection.close()
+            finally:
+                self._site = None
+                self._active = None
+                self._closed = True

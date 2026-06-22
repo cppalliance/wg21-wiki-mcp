@@ -32,14 +32,14 @@ clickable URL and revision id so every answer can be verified.
 ## Install
 
 This package is not published to PyPI yet; install it from the GitHub source.
-Pin a released version (recommended for reproducibility) with `@v0.1.0`, or
+Pin a released version (recommended for reproducibility) with `@v0.2.0`, or
 track the latest release with `@master` (the release branch). The simplest
 option is [`uv`](https://docs.astral.sh/uv/), which can run it without a manual
 install:
 
 ```bash
 # pinned release (reproducible)
-uvx --from git+https://github.com/cppalliance/wg21-wiki-mcp.git@v0.1.0 wg21-wiki-mcp
+uvx --from git+https://github.com/cppalliance/wg21-wiki-mcp.git@v0.2.0 wg21-wiki-mcp
 
 # or always the latest release (master tracks releases; --refresh bypasses uv's cache)
 uvx --refresh --from git+https://github.com/cppalliance/wg21-wiki-mcp.git@master wg21-wiki-mcp
@@ -48,9 +48,9 @@ uvx --refresh --from git+https://github.com/cppalliance/wg21-wiki-mcp.git@master
 Or install from git with pip/pipx:
 
 ```bash
-pipx install "git+https://github.com/cppalliance/wg21-wiki-mcp.git@v0.1.0"
+pipx install "git+https://github.com/cppalliance/wg21-wiki-mcp.git@v0.2.0"
 # or, into a venv:
-pip install "git+https://github.com/cppalliance/wg21-wiki-mcp.git@v0.1.0"
+pip install "git+https://github.com/cppalliance/wg21-wiki-mcp.git@v0.2.0"
 ```
 
 Or from a local clone (for development):
@@ -76,7 +76,7 @@ package is not on PyPI, run it from GitHub with `uvx`:
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/cppalliance/wg21-wiki-mcp.git@v0.1.0",
+        "git+https://github.com/cppalliance/wg21-wiki-mcp.git@v0.2.0",
         "wg21-wiki-mcp"
       ],
       "env": {
@@ -88,7 +88,7 @@ package is not on PyPI, run it from GitHub with `uvx`:
 }
 ```
 
-To always run the newest release instead of a pinned one, replace `@v0.1.0`
+To always run the newest release instead of a pinned one, replace `@v0.2.0`
 with `@master` and add `"--refresh"` as the first entry in `args` (so `uv`
 re-resolves the branch rather than reusing its cache). Pinning a tag is
 recommended for a source-of-truth tool so behavior is reproducible.
@@ -140,8 +140,25 @@ print(page.content)  # exact wikitext
 - [`python-dotenv`](https://pypi.org/project/python-dotenv/) - optional `.env` loading for local dev.
 - [`filelock`](https://py-filelock.readthedocs.io/) - cross-process single-flight page locking.
 
+## Error contract
+
+Every tool error surfaces as a structured `McpError` with a distinct,
+documented code. Messages are actionable and contain no credentials or wiki
+page content.
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| `1` | `PAGE_NOT_FOUND` | The requested page does not exist on the wiki. |
+| `2` | `AUTH_ERROR` | Authentication failed; check credentials in the server config. |
+| `3` | `FETCH_ERROR` | Network or API error after retries; check connectivity. |
+| `4` | `CONFIG_ERROR` | Credential env vars not set (`WIKI_BOT_USERNAME` / `WIKI_BOT_PASSWORD`). |
+| `-32602` | `INVALID_PARAMS` | Malformed or expired pagination cursor. |
+
+See [ARCHITECTURE.md](ARCHITECTURE.md#error-contract) for the full invariants.
+
 ## Documentation
 
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) - MCP host setup, troubleshooting, and agent tool-selection guide.
 - [ARCHITECTURE.md](ARCHITECTURE.md) - design, data flow, parse-vs-offload policy, what may break, future work.
 - [CONTRIBUTING.md](CONTRIBUTING.md) - dev setup, tests, confidentiality rules, where to start reading.
 - [SECURITY.md](SECURITY.md) - credential handling and confidentiality.

@@ -44,9 +44,14 @@ class FakeWikiClient:
         self.allpages: list[dict] = []
         self.fetch_calls = 0
         self.fetch_title_batches: list[list[str]] = []
+        self.section_fetch_calls = 0
         self.revision_calls = 0
         self._active = "bot"
         self._user = "TestBot@ci"
+        self._closed = False
+
+    def close(self) -> None:
+        self._closed = True
 
     # auth surface
     @property
@@ -102,6 +107,24 @@ class FakeWikiClient:
             )
         return out
 
+    def fetch_page_section(self, title: str, section: int) -> FetchedPage:
+        self.section_fetch_calls += 1
+        final, redirected_from = self._resolve(title)
+        page = self.pages.get(final)
+        if page is None:
+            return FetchedPage(title, final, redirected_from, None, None, None, None, True)
+        body = f"== section {section} ==\n{page.content}"
+        return FetchedPage(
+            requested_title=title,
+            title=final,
+            redirected_from=redirected_from,
+            revid=page.revid,
+            timestamp=page.timestamp,
+            size=len(body.encode("utf-8")),
+            content=body,
+            missing=False,
+        )
+
     def page_revisions(self, titles: list[str]) -> dict[str, int | None]:
         self.revision_calls += 1
         out: dict[str, int | None] = {}
@@ -144,30 +167,6 @@ class FakeWikiClient:
     def statistics(self) -> dict:  # pragma: no cover - unused by tests
         return {"query": {"statistics": {"pages": len(self.pages)}}}
 
-    def api(self, action: str, **params: object) -> dict:
-        # Only used by get_page section retrieval (rvsection).
-        title = str(params.get("titles"))
-        final, redirected_from = self._resolve(title)
-        page = self.pages.get(final)
-        if page is None:
-            return {"query": {"pages": {"-1": {"title": final, "missing": ""}}}}
-        section = int(params.get("rvsection", 0))
-        body = f"== section {section} ==\n{page.content}"
-        rds = [{"from": k, "to": v} for k, v in self.redirects.items()]
-        return {
-            "query": {
-                "redirects": rds,
-                "pages": {
-                    "1": {
-                        "title": final,
-                        "revisions": [
-                            {"revid": page.revid, "timestamp": page.timestamp, "slots": {"main": {"*": body}}}
-                        ],
-                    }
-                },
-            }
-        }
-
 
 @dataclass
 class FakeCalendar:
@@ -177,6 +176,8 @@ class FakeCalendar:
     mode: str = "normal"
     ttl_normal: int = 604800
     ttl_meeting: int = 3600
+    meeting_windows: dict[str, tuple[str, str]] | None = None
+    _closed: bool = False
 
     def is_meeting_active(self, when=None) -> bool:
         return self.active
@@ -187,6 +188,11 @@ class FakeCalendar:
     def ttl_mode(self, when=None) -> str:
         return self.mode
 
+    def window_for_meeting_title(self, title: str) -> tuple[str | None, str | None]:
+        if not self.meeting_windows or len(title) < 7 or title[4] != "-":
+            return None, None
+        return self.meeting_windows.get(title[:7], (None, None))
+
     def status(self) -> CalendarStatus:
         return CalendarStatus(
             source_url="https://example.org/meetings",
@@ -195,6 +201,9 @@ class FakeCalendar:
             in_meeting_window_now=self.active,
             windows=[],
         )
+
+    def close(self) -> None:
+        self._closed = True
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -213,15 +222,28 @@ def fake_client() -> FakeWikiClient:
 
 @pytest.fixture
 def make_ctx(tmp_path: Path):
+    contexts: list[ServerContext] = []
+
     def _make(client: FakeWikiClient, *, calendar: FakeCalendar | None = None) -> ServerContext:
         config = make_config(tmp_path)
         cache = Cache(config.cache_dir)
-        return ServerContext(
+        ctx = ServerContext(
             config=config,
             client=client,  # type: ignore[arg-type]
             calendar=calendar or FakeCalendar(),  # type: ignore[arg-type]
             cache=cache,
             fetcher=PageFetcher(client, cache),  # type: ignore[arg-type]
         )
+        contexts.append(ctx)
+        return ctx
 
-    return _make
+    yield _make
+    first_error: BaseException | None = None
+    for ctx in contexts:
+        try:
+            ctx.close()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+    if first_error is not None:
+        raise first_error

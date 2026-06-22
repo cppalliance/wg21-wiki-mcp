@@ -96,6 +96,15 @@ def test_get_page_section(fake_client, make_ctx):
     assert page.section == 1
     assert "section 1" in page.content
     assert page.provenance.revid == 3
+    assert fake_client.section_fetch_calls == 1
+
+
+def test_get_page_section_cached(fake_client, make_ctx):
+    fake_client.pages["P"] = FakePage("whole", 3)
+    ctx = make_ctx(fake_client)
+    tools.get_page(ctx, "P", section=1)
+    tools.get_page(ctx, "P", section=1)
+    assert fake_client.section_fetch_calls == 1
 
 
 def test_get_page_section_not_found(fake_client, make_ctx):
@@ -107,10 +116,33 @@ def test_get_page_section_not_found(fake_client, make_ctx):
 # --- list_pages / namespaces ---------------------------------------------
 def test_list_pages_and_cursor(fake_client, make_ctx):
     fake_client.allpages = [{"title": f"Ns Page {i}", "ns": 0} for i in range(5)]
+    fake_client.namespaces = {
+        "0": {"*": ""},
+        "4": {"*": "Project", "canonical": "Project"},
+    }
     ctx = make_ctx(fake_client)
     res = tools.list_pages(ctx, 0, limit=2)
     assert len(res.pages) == 2 and res.next_cursor
+    assert res.namespace_id == 0
+    assert res.namespace_name == ""
     assert res.pages[0].url.endswith("title=Ns_Page_0")
+
+    res_project = tools.list_pages(ctx, 4, limit=1)
+    assert res_project.namespace_name == "Project"
+
+
+def test_list_pages_namespace_lookup_failure(fake_client, make_ctx):
+    fake_client.allpages = [{"title": "Page One", "ns": 0}]
+
+    def _fail() -> dict:
+        raise RuntimeError("namespace lookup timeout")
+
+    fake_client.list_namespaces = _fail  # type: ignore[method-assign]
+    ctx = make_ctx(fake_client)
+    res = tools.list_pages(ctx, 0, limit=10)
+    assert len(res.pages) == 1
+    assert res.pages[0].title == "Page One"
+    assert res.namespace_name is None
 
 
 def test_list_namespaces(fake_client, make_ctx):
@@ -132,12 +164,22 @@ def test_list_meetings_flags_active(fake_client, make_ctx):
         {"title": "2026-03 Beta", "ns": 0},
         {"title": "Not A Meeting", "ns": 0},
     ]
-    ctx = make_ctx(fake_client, calendar=FakeCalendar(active=True, mode="meeting"))
+    ctx = make_ctx(
+        fake_client,
+        calendar=FakeCalendar(
+            active=True,
+            mode="meeting",
+            meeting_windows={"2026-06": ("2026-06-08", "2026-06-13")},
+        ),
+    )
     res = tools.list_meetings(ctx, limit=10)
     titles = [m.title for m in res.meetings]
     assert titles == ["2026-06 Alpha", "2026-03 Beta"]  # sorted desc, non-meetings excluded
     assert res.active_meeting == "2026-06 Alpha"
     assert res.meetings[0].is_active is True
+    assert res.meetings[0].window_start == "2026-06-08"
+    assert res.meetings[0].window_end == "2026-06-13"
+    assert res.meetings[1].window_start is None
 
 
 def test_list_meetings_none_active(fake_client, make_ctx):
@@ -180,6 +222,12 @@ def test_meeting_overview(fake_client, make_ctx):
     out_titles = [o.title for o in res.outlinks]
     assert "2026-06 Alpha:Agenda" in out_titles
     assert "Unrelated" not in out_titles  # filtered to meeting subpages
+
+
+def test_meeting_overview_no_meetings_raises(fake_client, make_ctx):
+    ctx = make_ctx(fake_client)
+    with pytest.raises(PageNotFound, match="No meeting namespaces"):
+        tools.get_meeting_overview(ctx)
 
 
 # --- session bundle -------------------------------------------------------

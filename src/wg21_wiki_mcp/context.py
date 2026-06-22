@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from .cache import Cache
 from .config import Config
 from .fetch import FetchOutcome, PageFetcher
+from .log_safety import register_config_secrets
 from .meetings import MeetingCalendar
 from .models import Provenance
 from .wiki_client import WikiClient
@@ -30,6 +31,7 @@ class ServerContext:
     @classmethod
     def create(cls, config: Config) -> ServerContext:
         """Build a context from config (no network until first use)."""
+        register_config_secrets(config)
         client = WikiClient(config)
         cache = Cache(config.cache_dir)
         return cls(
@@ -62,3 +64,24 @@ class ServerContext:
             oldid_url=self.client.oldid_url(outcome.title, outcome.revid),
             from_cache=outcome.from_cache,
         )
+
+    def close(self) -> None:
+        """Release cache, calendar, and wiki client resources."""
+        first_error: BaseException | None = None
+        try:
+            self.cache.close()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+        try:
+            self.calendar.close()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+        try:
+            self.client.close()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+        if first_error is not None:
+            raise first_error

@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 
 from .context import ServerContext
+from .log import get_logger
+from .log_safety import safe_exception_summary
 from .models import (
     BundledPage,
     Chunk,
@@ -23,7 +25,6 @@ from .models import (
     PageList,
     PageNotFound,
     PageRef,
-    Provenance,
     RecentChange,
     RecentChanges,
     SearchHit,
@@ -34,6 +35,8 @@ from .models import (
 from .pagination import chunk_utf8, decode_cursor, encode_cursor
 from .wikitext import extract_iso_slots, has_agenda_signal
 
+logger = get_logger("tools")
+
 _MEETING_TITLE_RE = re.compile(r"^\d{4}-\d{2} .+$")
 _DEFAULT_PAGE_MAX_BYTES = 48 * 1024
 _DEFAULT_BUNDLE_PAGE_MAX_BYTES = 8 * 1024
@@ -43,6 +46,19 @@ _MAX_NS_PAGE_LIMIT = 500
 
 def _clamp(value: int, lo: int, hi: int) -> int:
     return max(lo, min(value, hi))
+
+
+def _lookup_namespace_name(ctx: ServerContext, namespace_id: int) -> str | None:
+    """Resolve a namespace id to its API-provided display name, if known."""
+    try:
+        resp = ctx.client.list_namespaces()
+    except Exception:  # noqa: BLE001 - optional enrichment; list_pages must not fail
+        return None
+    for ns_id_str, ns in resp.get("query", {}).get("namespaces", {}).items():
+        if int(ns_id_str) == namespace_id:
+            name = ns.get("*")
+            return name if name is not None else None
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -103,13 +119,20 @@ def get_page(
     start = int(decode_cursor(cursor).get("o", 0))
 
     if section is not None:
-        prov, content = _fetch_section(ctx, title, section)
+        outcome = ctx.fetcher.get_page_section(
+            title,
+            section,
+            ttl_seconds=ctx.current_ttl(),
+            refresh=refresh,
+        )
     else:
         outcome = ctx.fetcher.get_page(title, ttl_seconds=ctx.current_ttl(), refresh=refresh)
-        if outcome.missing or outcome.content is None:
-            raise PageNotFound(f"Page not found: {title!r}")
-        prov = ctx.provenance(outcome)
-        content = outcome.content
+    if outcome.missing or outcome.content is None:
+        if section is not None:
+            raise PageNotFound(f"Page or section not found: {title!r} section {section}")
+        raise PageNotFound(f"Page not found: {title!r}")
+    prov = ctx.provenance(outcome)
+    content = outcome.content
 
     chunk_text, byte_start, byte_end, total, has_more = chunk_utf8(content, start=start, max_bytes=max_bytes)
     next_cursor = encode_cursor({"o": byte_end}) if has_more else None
@@ -125,42 +148,6 @@ def get_page(
             next_cursor=next_cursor,
         ),
     )
-
-
-def _fetch_section(ctx: ServerContext, title: str, section: int) -> tuple[Provenance, str]:
-    """Fetch a single section's verbatim wikitext via the API (server-side split)."""
-    from datetime import datetime, timezone
-
-    resp = ctx.client.api(
-        "query",
-        titles=title,
-        prop="revisions",
-        rvprop="content|ids|timestamp",
-        rvslots="main",
-        rvsection=section,
-        redirects=1,
-    )
-    query = resp.get("query", {})
-    pages = list(query.get("pages", {}).values())
-    if not pages or "missing" in pages[0] or "revisions" not in pages[0]:
-        raise PageNotFound(f"Page or section not found: {title!r} section {section}")
-    page = pages[0]
-    rev = page["revisions"][0]
-    slot = rev.get("slots", {}).get("main", rev)
-    redirects = {r["from"]: r["to"] for r in query.get("redirects", [])}
-    redirected_from = next((src for src, dst in redirects.items() if dst == page["title"]), None)
-    prov = Provenance(
-        requested_title=title,
-        title=page["title"],
-        redirected_from=redirected_from,
-        revid=rev.get("revid"),
-        last_modified=rev.get("timestamp"),
-        fetched_at=datetime.now(timezone.utc).isoformat(),
-        url=ctx.client.canonical_url(page["title"]),
-        oldid_url=ctx.client.oldid_url(page["title"], rev.get("revid")),
-        from_cache=False,
-    )
-    return prov, slot.get("*", "")
 
 
 # --------------------------------------------------------------------------- #
@@ -184,7 +171,12 @@ def list_pages(
     ]
     next_cont = resp.get("continue", {}).get("apcontinue")
     next_cursor = encode_cursor({"c": next_cont}) if next_cont is not None else None
-    return PageList(namespace_id=namespace, pages=pages, next_cursor=next_cursor)
+    return PageList(
+        namespace_id=namespace,
+        namespace_name=_lookup_namespace_name(ctx, namespace),
+        pages=pages,
+        next_cursor=next_cursor,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -242,7 +234,18 @@ def list_meetings(
     all_meetings = _discover_meetings(ctx)
     active = all_meetings[0] if (all_meetings and ctx.calendar.is_meeting_active()) else None
     window = all_meetings[offset : offset + limit]
-    refs = [MeetingRef(title=t, url=ctx.client.canonical_url(t), is_active=(t == active)) for t in window]
+    refs = []
+    for t in window:
+        window_start, window_end = ctx.calendar.window_for_meeting_title(t)
+        refs.append(
+            MeetingRef(
+                title=t,
+                url=ctx.client.canonical_url(t),
+                is_active=(t == active),
+                window_start=window_start,
+                window_end=window_end,
+            )
+        )
     next_offset = offset + limit
     next_cursor = encode_cursor({"o": next_offset}) if next_offset < len(all_meetings) else None
     return MeetingList(meetings=refs, active_meeting=active, next_cursor=next_cursor)
@@ -390,7 +393,11 @@ def wiki_status(ctx: ServerContext) -> WikiStatus:
     calendar = ctx.calendar.status()
     try:
         cache_entries: int | None = ctx.cache.count()
-    except Exception:  # noqa: BLE001 - status must never fail hard
+    except Exception as exc:  # noqa: BLE001 - status must never fail hard
+        logger.warning(
+            "Cache count failed: %s",
+            safe_exception_summary(exc),
+        )
         cache_entries = None
     return WikiStatus(
         base_url=ctx.config.base_url,

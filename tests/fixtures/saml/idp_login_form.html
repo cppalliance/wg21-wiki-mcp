@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Generic IdP Login</title></head>
+<body>
+<form action="https://idp.example/login?AuthState=abc123" method="post">
+  <input type="hidden" name="AuthState" value="abc123">
+  <input type="text" name="username" autocomplete="username">
+  <input type="password" name="password" autocomplete="current-password">
+  <button type="submit">Sign in</button>
+</form>
+</body>
+</html>

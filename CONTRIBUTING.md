@@ -48,6 +48,29 @@ pytest -m live --no-cov
 Live tests auto-skip when credentials are absent and must never print or store
 wiki content.
 
+## Testing authentication paths
+
+The wiki client supports two credential paths: **bot password** (default) and
+**user SSO** (``clientlogin``, then headless SimpleSAMLphp form-flow). Offline
+tests cover both without real credentials:
+
+| Path | Test module | What it exercises |
+|------|-------------|-------------------|
+| Bot password | ``tests/test_wiki_client.py`` | Login selection, re-login on ``readapidenied``, batch fetch |
+| ``clientlogin`` | ``tests/test_wiki_client_saml.py`` | ``_try_clientlogin`` success/failure (API errors return ``False``) |
+| SAML/SSO HTTP | ``tests/test_wiki_client_saml.py`` | Synthetic HTML fixtures under ``tests/fixtures/saml/`` mocked with ``responses``: happy path, missing form, missing fields, MFA/no-``SAMLResponse``, auto-follow branch |
+
+SAML fixtures are generic (no real IdP markup). Auth failures must raise
+:class:`~wg21_wiki_mcp.models.AuthError` with fixed, safe messages — see
+``tests/test_wiki_client_saml.py::test_auth_errors_contain_no_credentials`` and
+``tests/test_log_safety.py``.
+
+To run only the auth tests:
+
+```bash
+pytest tests/test_wiki_client.py tests/test_wiki_client_more.py tests/test_wiki_client_saml.py -m "not live"
+```
+
 ## Confidentiality rules (important)
 
 - Never embed real wiki page titles, namespace names, or page content in source,

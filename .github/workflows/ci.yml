@@ -11,6 +11,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# gitleaks/gitleaks-action@v2 requires GITLEAKS_LICENSE for organization repos.
+# The MIT-licensed gitleaks CLI is free; install and run it directly instead.
+
+env:
+  GITLEAKS_VERSION: "8.24.2"
+
 jobs:
   test:
     name: offline (${{ matrix.os }}, py${{ matrix.python-version }})
@@ -35,6 +41,53 @@ jobs:
         run: mypy src
       - name: Tests + coverage gate (offline)
         run: pytest -m "not live"
+
+  secret-scan:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSLf "${base}/${tarball}" -o "/tmp/${tarball}"
+          curl -sSLf "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o /tmp/gitleaks_checksums.txt
+          match_count=$(grep -Fc " ${tarball}" /tmp/gitleaks_checksums.txt)
+          if [ "${match_count}" -ne 1 ]; then
+            echo "Expected exactly one checksum line for ${tarball}, got ${match_count}"
+            exit 1
+          fi
+          grep -F " ${tarball}" /tmp/gitleaks_checksums.txt | (cd /tmp && sha256sum --check)
+          tar -xzf "/tmp/${tarball}" -C /tmp gitleaks
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      - name: Scan pull request commits
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          echo "Scanning ${BASE}..${HEAD}"
+          gitleaks detect \
+            --source . \
+            --log-opts="${BASE}..${HEAD}" \
+            --redact \
+            --verbose
+      - name: Scan full history
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          gitleaks detect \
+            --source . \
+            --redact \
+            --verbose
 
   live:
     name: live (secrets)
