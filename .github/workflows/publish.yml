@@ -1,17 +1,23 @@
 name: Publish
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
   id-token: write
 
 jobs:
+  test:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
   pypi-publish:
     name: publish to PyPI
+    needs: test
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -50,6 +56,13 @@ jobs:
           echo "__init__.py version: ${PKG_VERSION}"
           if [ "${TAG_VERSION}" != "${PYPROJECT_VERSION}" ] || [ "${TAG_VERSION}" != "${PKG_VERSION}" ]; then
             echo "::error::Tag ${TAG_NAME} (${TAG_VERSION}) must match pyproject.toml (${PYPROJECT_VERSION}) and __init__.py (${PKG_VERSION}) before publish"
+            exit 1
+          fi
+      - name: Verify lockfile present
+        run: |
+          set -euo pipefail
+          if [ ! -f requirements-lock.txt ]; then
+            echo "::error::requirements-lock.txt is missing on this ref; the SBOM step cannot build a reproducible environment. Ensure the release tag points at a commit that includes requirements-lock.txt (added 2026-06-25) -- re-cut the tag on develop HEAD."
             exit 1
           fi
       - name: Build sdist and wheel

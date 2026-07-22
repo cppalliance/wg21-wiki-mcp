@@ -1,9 +1,10 @@
 # First PyPI publish (one-time setup)
 
-The [publish workflow](../.github/workflows/publish.yml) runs automatically on
-`v*` tag push after this one-time configuration. Until the first successful
-publish, `pip install wg21-wiki-mcp` will not resolve on PyPI even though the
-workflow and README install instructions are in place.
+The [publish workflow](../.github/workflows/publish.yml) runs automatically when
+a GitHub Release is **published** (`release: published`) after this one-time
+configuration. Until the first successful publish, `pip install wg21-wiki-mcp`
+will not resolve on PyPI even though the workflow and README install
+instructions are in place.
 
 ## Prerequisites
 
@@ -25,11 +26,13 @@ workflow and README install instructions are in place.
 ## 2. Create the GitHub `pypi` environment
 
 1. Repository **Settings → Environments → New environment** → name `pypi`.
-2. Optionally restrict deployment branches to `master` (tags are evaluated against
-   the commit; matching org policy is sufficient).
+2. Leave the deployment branch/tag policy unrestricted (or explicitly allow the
+   `v*` tag pattern). The workflow is triggered by a published Release, so the
+   `pypi` deployment runs against the release tag ref — a branch-only policy such
+   as `master` would block it.
 3. No long-lived PyPI password is required — OIDC supplies the token at publish time.
 
-## 3. Cut a release tag that matches package version
+## 3. Publish a GitHub Release that matches package version
 
 The publish job **fails** if the tag does not match `version` in
 `pyproject.toml` and `__version__` in `src/wg21_wiki_mcp/__init__.py`.
@@ -37,21 +40,27 @@ The publish job **fails** if the tag does not match `version` in
 Follow [CONTRIBUTING.md](../CONTRIBUTING.md#branching-and-releases):
 
 1. Bump version on `develop`, update `CHANGELOG.md`.
-2. PR `develop` → `master`; merge when CI is green.
-3. Tag the merge commit on `master` and push:
-   `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`
+2. Merge the bump to `develop`; wait for CI to be green.
+3. Publish a GitHub Release for tag `vX.Y.Z` targeting `develop`:
+   `gh release create vX.Y.Z --target develop --title vX.Y.Z --generate-notes`
+   (or use the Releases UI). Publishing the Release is what triggers the
+   workflow — pushing a bare tag does not.
 
-Use a tag created **after** `publish.yml` merged (e.g. `v0.2.1` if `v0.2.0`
-predates the workflow).
+The release tag's commit must contain `requirements-lock.txt` and the version
+files (`pyproject.toml`, `src/wg21_wiki_mcp/__init__.py`) — the job checks out the
+tag and builds, verifies, and generates the SBOM from it. `publish.yml` itself is
+loaded from the default branch (`develop`), so it need not exist at the tag
+commit. Cutting from current `develop` satisfies both.
 
 ## 4. Verify the publish workflow
 
-On tag push, the **Publish** workflow should:
+When the Release is published, the **Publish** workflow should:
 
-1. Build sdist + wheel
-2. Generate CycloneDX SBOM and Sigstore bundles
-3. Upload to PyPI via Trusted Publisher
-4. Attach artifacts to the GitHub Release
+1. Run the CI suite as a gate (`needs: test`)
+2. Build sdist + wheel
+3. Generate CycloneDX SBOM and Sigstore bundles
+4. Upload to PyPI via Trusted Publisher
+5. Attach artifacts to the GitHub Release
 
 Confirm:
 
@@ -63,7 +72,7 @@ pip index versions wg21-wiki-mcp
 
 | Symptom | Check |
 | --- | --- |
-| Workflow skipped | Tag must match `v*`; workflow triggers on tag push only |
+| Workflow did not run | Triggers on **published Releases** (not tag pushes) and loads from default branch `develop`; publish a Release, don't just push a tag |
 | Trusted publisher rejected | Owner/repo/workflow/environment must match PyPI settings exactly |
 | Version mismatch error | Tag `vX.Y.Z` must equal `pyproject.toml` and `__init__.py` |
 | Environment missing | Create GitHub environment `pypi` |

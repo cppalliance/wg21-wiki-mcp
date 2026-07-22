@@ -121,8 +121,8 @@ transport evaluation and the opt-in prototype.
 
 This repository is maintained by The C++ Alliance. Review expectations:
 
-- All changes land via pull request against `develop` (release merges use
-  `develop` → `master`).
+- All changes land via pull request against `develop` (see
+  [Branching and releases](#branching-and-releases) for how releases are cut).
 - [CODEOWNERS](CODEOWNERS) maps critical paths (`src/`, `.github/`, `pyproject.toml`)
   to `@bradjin8` and `@wpak-ai`; GitHub automatically requests review from those
   owners.
@@ -191,27 +191,34 @@ pip-compile pyproject.toml --output-file=requirements-lock.txt --strip-extras
 
 ## Branching and releases
 
-- `develop` is the default branch where day-to-day work lands.
-- `master` is the release branch and always points at the latest released
-  commit; users installing `@master` get the latest release.
+- `develop` is the default branch where day-to-day work lands, and the branch
+  releases are cut from. [publish.yml](.github/workflows/publish.yml) is triggered
+  by `release: published`, and GitHub always loads release-triggered workflows
+  from the default branch — so publishing a GitHub Release runs the workflow as
+  it exists on `develop`.
+- `master` is currently **stale**: it still points at the `v0.2.0` commit and does
+  not contain `publish.yml`, so it plays no part in publishing. Until the branches
+  are reconciled, treat `develop` as the release source (do not tag or release
+  from `master`).
 - To cut a release `X.Y.Z`:
   1. Bump the version in two places: `version` in [pyproject.toml](pyproject.toml)
      and `__version__` in [src/wg21_wiki_mcp/__init__.py](src/wg21_wiki_mcp/__init__.py)
      (keep them in sync).
   2. Move the `## [Unreleased]` entries in [CHANGELOG.md](CHANGELOG.md) under a
      new `## [X.Y.Z] - YYYY-MM-DD` heading and update the link references.
-  3. Open a PR from `develop` to `master`; merge once CI is green.
-  4. Tag the merge commit on `master` and push the tag:
-     `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
-     The tag must match the bumped `version` / `__version__`; [publish.yml](.github/workflows/publish.yml)
-     fails the build otherwise.
-  5. The [publish workflow](.github/workflows/publish.yml) uploads the sdist and
-     wheel to PyPI via Trusted Publisher (OIDC), generates a CycloneDX SBOM,
-     signs the distributions and SBOM with Sigstore, and creates the GitHub
-     Release (if missing) with those artifacts attached. Configure the `pypi`
-     GitHub environment and the matching trusted publisher on
-     [pypi.org/project/wg21-wiki-mcp](https://pypi.org/project/wg21-wiki-mcp/)
-     before the first tag push. See [docs/FIRST_PYPI_PUBLISH.md](docs/FIRST_PYPI_PUBLISH.md)
+  3. Merge the bump to `develop` via PR; wait for CI to be green.
+  4. Publish a GitHub Release for tag `vX.Y.Z` targeting `develop` — in the UI, or
+     `gh release create vX.Y.Z --target develop --title vX.Y.Z --generate-notes`.
+     Publishing the release is what fires the workflow; pushing a bare tag no
+     longer triggers a publish. The tag must match the bumped `version` /
+     `__version__`, or [publish.yml](.github/workflows/publish.yml) fails the build.
+  5. [publish.yml](.github/workflows/publish.yml) first runs the full CI suite as a
+     gate (`needs: test`), then uploads the sdist and wheel to PyPI via Trusted
+     Publisher (OIDC), generates a CycloneDX SBOM, signs the distributions and SBOM
+     with Sigstore, and attaches those artifacts to the GitHub Release you
+     published. Configure the `pypi` GitHub environment and the matching trusted
+     publisher on [pypi.org/project/wg21-wiki-mcp](https://pypi.org/project/wg21-wiki-mcp/)
+     before the first release. See [docs/FIRST_PYPI_PUBLISH.md](docs/FIRST_PYPI_PUBLISH.md)
      for the one-time checklist.
-  6. Review the auto-created GitHub Release notes and Sigstore bundles on the
+  6. Review the auto-generated GitHub Release notes and Sigstore bundles on the
      release assets tab; edit the release description if needed.
