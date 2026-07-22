@@ -207,11 +207,15 @@ pip-compile pyproject.toml --output-file=requirements-lock.txt --strip-extras
   2. Move the `## [Unreleased]` entries in [CHANGELOG.md](CHANGELOG.md) under a
      new `## [X.Y.Z] - YYYY-MM-DD` heading and update the link references.
   3. Merge the bump to `develop` via PR; wait for CI to be green.
-  4. Publish a GitHub Release for tag `vX.Y.Z` targeting `develop` — in the UI, or
-     `gh release create vX.Y.Z --target develop --title vX.Y.Z --generate-notes`.
-     Publishing the release is what fires the workflow; pushing a bare tag no
-     longer triggers a publish. The tag must match the bumped `version` /
-     `__version__`, or [publish.yml](.github/workflows/publish.yml) fails the build.
+  4. Publish a GitHub Release for a **new** tag `vX.Y.Z` targeting `develop` — in
+     the UI, or `gh release create vX.Y.Z --target develop --title vX.Y.Z --generate-notes`.
+     `--target develop` only selects the commit when the release *creates* the tag:
+     if `vX.Y.Z` already exists (pre-created or pushed), GitHub ignores `--target`
+     and publishes from wherever that tag already points. Ensure `vX.Y.Z` does not
+     yet exist so the release creates it on the merged `develop` commit. Publishing
+     the release is what fires the workflow; pushing a bare tag no longer triggers a
+     publish. The tag must match the bumped `version` / `__version__`, or
+     [publish.yml](.github/workflows/publish.yml) fails the build.
   5. [publish.yml](.github/workflows/publish.yml) first runs the full CI suite as a
      gate (`needs: test`), then uploads the sdist and wheel to PyPI via Trusted
      Publisher (OIDC), generates a CycloneDX SBOM, signs the distributions and SBOM

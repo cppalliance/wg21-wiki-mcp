@@ -26,10 +26,13 @@ instructions are in place.
 ## 2. Create the GitHub `pypi` environment
 
 1. Repository **Settings → Environments → New environment** → name `pypi`.
-2. Leave the deployment branch/tag policy unrestricted (or explicitly allow the
-   `v*` tag pattern). The workflow is triggered by a published Release, so the
-   `pypi` deployment runs against the release tag ref — a branch-only policy such
-   as `master` would block it.
+2. Restrict the environment's deployment branches/tags to the `v*` **tag** pattern
+   ("Deployment branches and tags" → "Selected branches and tags" → add a tag rule
+   `v*`). The workflow is triggered by a published Release, so the `pypi` deployment
+   runs against the release tag ref: a branch-only policy (e.g. `master`) would
+   block it, and an unrestricted policy removes an environment-level guardrail
+   against accidental non-release deployments. Optionally also require reviewers on
+   the `pypi` environment as an extra approval gate.
 3. No long-lived PyPI password is required — OIDC supplies the token at publish time.
 
 ## 3. Publish a GitHub Release that matches package version
@@ -41,10 +44,14 @@ Follow [CONTRIBUTING.md](../CONTRIBUTING.md#branching-and-releases):
 
 1. Bump version on `develop`, update `CHANGELOG.md`.
 2. Merge the bump to `develop`; wait for CI to be green.
-3. Publish a GitHub Release for tag `vX.Y.Z` targeting `develop`:
+3. Publish a GitHub Release for a **new** tag `vX.Y.Z` targeting `develop`:
    `gh release create vX.Y.Z --target develop --title vX.Y.Z --generate-notes`
-   (or use the Releases UI). Publishing the Release is what triggers the
-   workflow — pushing a bare tag does not.
+   (or use the Releases UI). `--target develop` only selects the commit when the
+   release *creates* the tag; if `vX.Y.Z` already exists (pre-created or pushed),
+   GitHub ignores `--target` and publishes from that tag's existing commit. Make
+   sure `vX.Y.Z` does not yet exist so the release creates it on the merged
+   `develop` commit. Publishing the Release is what triggers the workflow —
+   pushing a bare tag does not.
 
 The release tag's commit must contain `requirements-lock.txt` and the version
 files (`pyproject.toml`, `src/wg21_wiki_mcp/__init__.py`) — the job checks out the

@@ -5,20 +5,24 @@ on:
     types: [published]
   workflow_dispatch:
 
-permissions:
-  contents: write
-  id-token: write
+# Least privilege: no workflow-level token scope. Each job grants only what it needs.
+permissions: {}
 
 jobs:
   test:
     name: CI
+    # The reusable CI only reads the repo; do not forward write scope or secrets.
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci.yml
-    secrets: inherit
 
   pypi-publish:
     name: publish to PyPI
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create/update the GitHub Release and upload assets
+      id-token: write # OIDC for PyPI Trusted Publishing and Sigstore
     environment:
       name: pypi
       url: https://pypi.org/p/wg21-wiki-mcp
@@ -62,7 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f requirements-lock.txt ]; then
-            echo "::error::requirements-lock.txt is missing on this ref; the SBOM step cannot build a reproducible environment. Ensure the release tag points at a commit that includes requirements-lock.txt (added 2026-06-25) -- re-cut the tag on develop HEAD."
+            echo "::error::requirements-lock.txt is missing on this ref; the SBOM step cannot build a reproducible environment. Create the release tag from the intended release commit that includes requirements-lock.txt."
             exit 1
           fi
       - name: Build sdist and wheel
