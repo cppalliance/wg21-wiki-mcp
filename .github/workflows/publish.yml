@@ -3,7 +3,6 @@ name: Publish
 on:
   release:
     types: [published]
-  workflow_dispatch:
 
 # Least privilege: no workflow-level token scope. Each job grants only what it needs.
 permissions: {}
