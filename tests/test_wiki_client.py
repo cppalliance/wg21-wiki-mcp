@@ -186,7 +186,7 @@ def test_api_non_query_uses_write_lock(tmp_path, monkeypatch):
     assert read_calls == []
 
 
-def test_api_timed_query_uses_write_lock(tmp_path, monkeypatch):
+def test_api_timed_query_uses_read_lock(tmp_path, monkeypatch):
     from contextlib import contextmanager
 
     client = wc.WikiClient(_config(tmp_path))
@@ -214,8 +214,8 @@ def test_api_timed_query_uses_write_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(client._lock, "write", tracked_write)
 
     assert client.api("query", timeout=0.5) == {"ok": 1}
-    assert write_calls == [1]
-    assert read_calls == []
+    assert read_calls == [1]
+    assert write_calls == []
 
 
 def test_relogin_on_readapidenied(tmp_path, monkeypatch):
@@ -259,6 +259,74 @@ def test_concurrent_query_api_calls_do_not_serialize(tmp_path, monkeypatch):
             assert fut.result(timeout=5) == {"ok": 1}
     elapsed = time.monotonic() - t0
     assert elapsed < api_delay * 1.75
+
+
+def test_concurrent_timed_query_api_calls_do_not_serialize(tmp_path, monkeypatch):
+    """Two concurrent timed query api() calls overlap instead of serializing on the lock."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    api_delay = 0.2
+    entered = threading.Barrier(2, timeout=5)
+
+    def api_func(action, params):
+        entered.wait()
+        time.sleep(api_delay)
+        return {"ok": 1}
+
+    client = wc.WikiClient(_config(tmp_path))
+    _patch_sites(monkeypatch, client, [FakeSite(api_func=api_func)])
+    client.login()
+
+    t0 = time.monotonic()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(client.api, "query", timeout=5.0) for _ in range(2)]
+        for fut in futures:
+            assert fut.result(timeout=5) == {"ok": 1}
+    elapsed = time.monotonic() - t0
+    assert elapsed < api_delay * 1.75
+
+
+def test_timed_query_request_timeout_isolated_per_call(tmp_path, monkeypatch):
+    """Per-call timeouts reach session.request without mutating site.requests."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    barrier = threading.Barrier(2, timeout=5)
+    timeouts_by_thread: dict[int, float] = {}
+    record_lock = threading.Lock()
+
+    def api_func(action, params):
+        site.connection.request("GET", "http://test.example/")
+        return {"ok": 1}
+
+    site = FakeSite(api_func=api_func)
+
+    def recording_request(method, url, **kwargs):
+        barrier.wait()
+        timeout = kwargs.get("timeout")
+        assert timeout is not None
+        with record_lock:
+            timeouts_by_thread[threading.get_ident()] = float(timeout)
+        return types.SimpleNamespace(ok=True)
+
+    site.connection.request = recording_request  # type: ignore[attr-defined]
+    wc._install_per_call_request_timeout(site.connection)  # type: ignore[arg-type]
+
+    client = wc.WikiClient(_config(tmp_path))
+    _patch_sites(monkeypatch, client, [site])
+    client.login()
+    assert "timeout" not in site.requests
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f1 = pool.submit(client.api, "query", timeout=3.0)
+        f2 = pool.submit(client.api, "query", timeout=7.0)
+        assert f1.result(timeout=5) == {"ok": 1}
+        assert f2.result(timeout=5) == {"ok": 1}
+
+    assert len(timeouts_by_thread) == 2
+    recorded = sorted(timeouts_by_thread.values())
+    assert recorded[0] == pytest.approx(3.0, rel=0.25)
+    assert recorded[1] == pytest.approx(7.0, rel=0.25)
+    assert "timeout" not in site.requests
 
 
 def test_rwlock_blocks_new_readers_while_writer_waits():

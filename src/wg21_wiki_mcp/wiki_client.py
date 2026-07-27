@@ -19,6 +19,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse
@@ -40,7 +41,22 @@ _SAML_MAX_RETRIES = 2
 _TRANSIENT_HTTP_CODES = frozenset(range(500, 600))
 _UNSET_TIMEOUT = object()
 
+_API_REQUEST_TIMEOUT: ContextVar[float | None] = ContextVar("_API_REQUEST_TIMEOUT", default=None)
+
 _log = logging.getLogger(__name__)
+
+
+def _install_per_call_request_timeout(session: requests.Session) -> None:
+    """Wrap ``session.request`` so per-call API timeouts override mwclient defaults."""
+    orig = session.request
+
+    def request(method: str, url: str, **kwargs: object) -> requests.Response:
+        override = _API_REQUEST_TIMEOUT.get()
+        if override is not None:
+            kwargs["timeout"] = override
+        return orig(method, url, **kwargs)
+
+    session.request = request  # type: ignore[method-assign]
 
 
 def _log_saml_step(step: str, **context: object) -> None:
@@ -238,8 +254,10 @@ class WikiClient:
     """Thread-safe-ish authenticated MediaWiki client.
 
     A single shared session is used. Read-only ``query`` API calls may run
-    concurrently under a shared reader lock; login, re-login, and other
-    mutations take an exclusive writer lock so the session cannot be corrupted.
+    concurrently under a shared reader lock, including timed ``query`` calls
+    (per-call HTTP timeouts do not mutate ``site.requests``). Login, re-login,
+    and other mutations take an exclusive writer lock so the session cannot be
+    corrupted.
     """
 
     def __init__(self, config: Config) -> None:
@@ -305,13 +323,15 @@ class WikiClient:
         self._login_with(self._active, deadline=deadline)
 
     def _new_site(self) -> mwclient.Site:
-        return mwclient.Site(
+        site = mwclient.Site(
             self._host,
             path="/",
             scheme=self._scheme,
             clients_useragent=self._config.user_agent,
             max_lag=5,
         )
+        _install_per_call_request_timeout(site.connection)
+        return site
 
     @staticmethod
     def _close_site(site: mwclient.Site | None) -> None:
@@ -357,6 +377,19 @@ class WikiClient:
                     request_opts.pop("timeout", None)
                 else:
                     request_opts["timeout"] = saved_request_timeout
+
+    @contextmanager
+    def _api_request_timeout_scope(self, deadline: float | None) -> Iterator[None]:
+        """Per-call HTTP timeout for API reads without mutating ``site.requests``."""
+        if deadline is None:
+            yield
+            return
+        remaining = self._timeout_remaining(deadline)
+        token: Token[float | None] = _API_REQUEST_TIMEOUT.set(remaining)
+        try:
+            yield
+        finally:
+            _API_REQUEST_TIMEOUT.reset(token)
 
     def _bot_login(self, cred: Credentials, *, deadline: float | None = None) -> None:
         self._timeout_remaining(deadline)
@@ -516,7 +549,7 @@ class WikiClient:
         params: dict[str, object],
     ) -> dict:
         """Invoke ``site.api``; caller must hold read or write lock."""
-        with self._site_request_timeout(site, deadline):
+        with self._api_request_timeout_scope(deadline):
             return site.api(action, **params)
 
     def _api_attempt(
@@ -529,8 +562,7 @@ class WikiClient:
         """One locked API attempt. Returns (result, last_exc, relogin)."""
         relogin = False
         read_only = action == "query"
-        # Timed calls mutate site.requests["timeout"]; use the write lock only.
-        use_read_lock = read_only and deadline is None
+        use_read_lock = read_only
 
         if use_read_lock:
             with self._lock.read():
