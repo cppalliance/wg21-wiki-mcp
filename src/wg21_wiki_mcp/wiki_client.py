@@ -50,13 +50,13 @@ def _install_per_call_request_timeout(session: requests.Session) -> None:
     """Wrap ``session.request`` so per-call API timeouts override mwclient defaults."""
     orig = session.request
 
-    def request(method: str, url: str, **kwargs: object) -> requests.Response:
+    def request(method: str | bytes, url: str | bytes, **kwargs: Any) -> requests.Response:
         override = _API_REQUEST_TIMEOUT.get()
         if override is not None:
             kwargs["timeout"] = override
         return orig(method, url, **kwargs)
 
-    session.request = request  # type: ignore[method-assign]
+    session.request = request  # type: ignore[method-assign, assignment]
 
 
 def _log_saml_step(step: str, **context: object) -> None:
