@@ -63,7 +63,7 @@ markers = [
     "live: tests that hit the real wiki using configured credentials (skipped without them)",
     "canary: minimal live smoke (bot login + one read-only tool; subset of live)",
     "latency_gate: meeting-time composite latency regressions (ubuntu/py3.12 CI gate)",
-    "benchmark: cache throughput benchmarks (run with pytest --benchmark-only)",
+    "benchmark: throughput/latency benchmarks (run with pytest --benchmark-only)",
 ]
 
 [tool.coverage.run]

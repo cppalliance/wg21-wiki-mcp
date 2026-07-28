@@ -77,9 +77,16 @@ def test_regression_gate_exits_on_invalid_json(tmp_path: Path) -> None:
         main([str(current), str(baseline)])
 
 
-def test_committed_baseline_matches_ci_runner() -> None:
-    """Guardrail: committed baseline must be from ubuntu-latest / Python 3.12 CI."""
-    path = Path(__file__).resolve().parents[1] / "benchmarks" / "cache-baseline.json"
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "benchmarks/cache-baseline.json",
+        "benchmarks/meeting-time-baseline.json",
+    ],
+)
+def test_committed_baseline_matches_ci_runner(relative_path: str) -> None:
+    """Guardrail: committed baselines must be from ubuntu-latest / Python 3.12 CI."""
+    path = Path(__file__).resolve().parents[1] / relative_path
     data = json.loads(path.read_text(encoding="utf-8"))
     machine = data["machine_info"]
     commit = data["commit_info"]

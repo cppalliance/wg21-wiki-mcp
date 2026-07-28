@@ -86,7 +86,7 @@ jobs:
         run: python scripts/build_api_docs.py --check
 
   benchmark:
-    name: cache benchmark
+    name: benchmark (cache + meeting-time)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -133,12 +133,42 @@ jobs:
             --benchmark-warmup=on \
             --benchmark-min-rounds=10
           check
+      - name: Run meeting-time benchmarks
+        # benchmarks/meeting-time-baseline.json holds measured means from this
+        # runner (ubuntu-latest, Python 3.12). Regenerate from the benchmark-json
+        # artifact when meeting-time benchmark code changes.
+        run: |
+          pytest tests/test_meeting_time_benchmark.py --benchmark-only --no-cov \
+            -o addopts= \
+            --benchmark-json=meeting-time-benchmark.json \
+            --benchmark-warmup=off \
+            --benchmark-min-rounds=5
+      - name: Meeting-time benchmark regression gate
+        run: |
+          set -euo pipefail
+          check_meeting() {
+            python scripts/check_cache_benchmark_regression.py \
+              meeting-time-benchmark.json benchmarks/meeting-time-baseline.json \
+              --max-regression 0.5
+          }
+          if check_meeting; then
+            exit 0
+          fi
+          echo "::warning::Meeting-time regression gate failed once; re-running benchmarks..."
+          pytest tests/test_meeting_time_benchmark.py --benchmark-only --no-cov \
+            -o addopts= \
+            --benchmark-json=meeting-time-benchmark.json \
+            --benchmark-warmup=off \
+            --benchmark-min-rounds=5
+          check_meeting
       - name: Upload benchmark JSON
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: benchmark-json
-          path: benchmark.json
+          path: |
+            benchmark.json
+            meeting-time-benchmark.json
 
   test:
     name: offline (${{ matrix.os }}, py${{ matrix.python-version }})

@@ -6,6 +6,8 @@ generic so the test suite reveals nothing confidential.
 
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +15,7 @@ from urllib.parse import quote
 
 import pytest
 
+from wg21_wiki_mcp import tools
 from wg21_wiki_mcp.cache import Cache
 from wg21_wiki_mcp.config import Config, Credentials
 from wg21_wiki_mcp.context import ServerContext
@@ -21,6 +24,54 @@ from wg21_wiki_mcp.models import CalendarStatus
 from wg21_wiki_mcp.wiki_client import FetchedPage
 
 BASE_URL = "https://wiki.example.org"
+
+MEETING_CONCURRENT_WORKERS = 4
+MEETING_TEST_TITLE = "2026-06 Alpha"
+MEETING_WG_COUNT = 8
+
+
+def seed_meeting_pages(fake_client: FakeWikiClient) -> None:
+    """Populate a fake client with a small meeting page graph for load/benchmark tests."""
+    fake_client.pages[MEETING_TEST_TITLE] = FakePage("home", 1)
+    for i in range(MEETING_WG_COUNT):
+        fake_client.pages[f"{MEETING_TEST_TITLE}:WG{i}"] = FakePage(f"body {i}", i + 2)
+    fake_client.allpages = [{"title": MEETING_TEST_TITLE, "ns": 0}]
+    fake_client.links[MEETING_TEST_TITLE] = [
+        {"title": f"{MEETING_TEST_TITLE}:WG{i}", "ns": 0} for i in range(MEETING_WG_COUNT)
+    ]
+
+
+def run_concurrent_meeting_sessions(
+    ctx: ServerContext,
+    *,
+    workers: int = MEETING_CONCURRENT_WORKERS,
+    barrier_timeout: float = 5,
+    join_timeout: float = 10,
+) -> float:
+    """Run parallel ``get_meeting_sessions`` calls; return monotonic elapsed seconds."""
+    errors: list[BaseException] = []
+    ready = threading.Barrier(workers)
+
+    def worker() -> None:
+        try:
+            ready.wait(timeout=barrier_timeout)
+            tools.get_meeting_sessions(ctx)
+        except BaseException as exc:  # noqa: BLE001 - collect for assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(workers)]
+    start = time.monotonic()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=join_timeout)
+    elapsed = time.monotonic() - start
+
+    if errors:
+        raise AssertionError(errors)
+    if any(thread.is_alive() for thread in threads):
+        raise AssertionError("worker threads still alive after join timeout")
+    return elapsed
 
 
 @dataclass
@@ -229,8 +280,13 @@ def fake_client() -> FakeWikiClient:
 def make_ctx(tmp_path: Path):
     contexts: list[ServerContext] = []
 
-    def _make(client: FakeWikiClient, *, calendar: FakeCalendar | None = None) -> ServerContext:
-        config = make_config(tmp_path)
+    def _make(
+        client: FakeWikiClient,
+        *,
+        calendar: FakeCalendar | None = None,
+        cache_parent: Path | None = None,
+    ) -> ServerContext:
+        config = make_config(cache_parent or tmp_path)
         cache = Cache(config.cache_dir)
         ctx = ServerContext(
             config=config,

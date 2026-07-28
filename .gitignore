@@ -25,6 +25,7 @@ dist/
 .pytest_cache/
 .benchmarks/
 benchmark.json
+meeting-time-benchmark.json
 .ruff_cache/
 .mypy_cache/
 .coverage
