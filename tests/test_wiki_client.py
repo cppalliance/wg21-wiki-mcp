@@ -324,8 +324,8 @@ def test_timed_query_request_timeout_isolated_per_call(tmp_path, monkeypatch):
 
     assert len(timeouts_by_thread) == 2
     recorded = sorted(timeouts_by_thread.values())
-    assert recorded[0] == pytest.approx(3.0, rel=0.25)
-    assert recorded[1] == pytest.approx(7.0, rel=0.25)
+    assert recorded[0] == pytest.approx(3.0, rel=0.1)
+    assert recorded[1] == pytest.approx(7.0, rel=0.1)
     assert "timeout" not in site.requests
 
 
@@ -517,6 +517,34 @@ def test_api_timeout_restores_absent_request_timeout(tmp_path, monkeypatch):
     client.login()
     assert "timeout" not in site.requests
     client.api("query", timeout=0.5)
+    assert "timeout" not in site.requests
+
+
+def test_session_request_override_requires_active_flag():
+    """API deadline ContextVar does not override explicit timeouts unless scope is active."""
+    seen: dict[str, object] = {}
+
+    def orig(_method, _url, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return types.SimpleNamespace(ok=True)
+
+    session = types.SimpleNamespace(request=orig)
+    wc._install_per_call_request_timeout(session)  # type: ignore[arg-type]
+    token = wc._API_REQUEST_TIMEOUT.set(1.0)
+    try:
+        session.request("GET", "http://test.example/", timeout=99.0)
+    finally:
+        wc._API_REQUEST_TIMEOUT.reset(token)
+    assert seen["timeout"] == 99.0
+
+
+def test_api_timed_non_query_restores_absent_request_timeout(tmp_path, monkeypatch):
+    site = FakeSite(api_func=lambda _a, _p: {"ok": "mutate"})
+    client = wc.WikiClient(_config(tmp_path))
+    _patch_sites(monkeypatch, client, [site])
+    client.login()
+    assert "timeout" not in site.requests
+    client.api("edit", timeout=0.5)
     assert "timeout" not in site.requests
 
 

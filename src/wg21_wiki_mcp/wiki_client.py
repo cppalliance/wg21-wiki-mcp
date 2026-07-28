@@ -42,17 +42,18 @@ _TRANSIENT_HTTP_CODES = frozenset(range(500, 600))
 _UNSET_TIMEOUT = object()
 
 _API_REQUEST_TIMEOUT: ContextVar[float | None] = ContextVar("_API_REQUEST_TIMEOUT", default=None)
+_API_REQUEST_TIMEOUT_ACTIVE: ContextVar[bool] = ContextVar("_API_REQUEST_TIMEOUT_ACTIVE", default=False)
 
 _log = logging.getLogger(__name__)
 
 
 def _install_per_call_request_timeout(session: requests.Session) -> None:
-    """Wrap ``session.request`` so per-call API timeouts override mwclient defaults."""
+    """Wrap ``session.request`` to apply API deadlines only during ``_api_request_timeout_scope``."""
     orig = session.request
 
     def request(method: str | bytes, url: str | bytes, **kwargs: Any) -> requests.Response:
         override = _API_REQUEST_TIMEOUT.get()
-        if override is not None:
+        if _API_REQUEST_TIMEOUT_ACTIVE.get() and override is not None:
             kwargs["timeout"] = override
         return orig(method, url, **kwargs)
 
@@ -380,16 +381,18 @@ class WikiClient:
 
     @contextmanager
     def _api_request_timeout_scope(self, deadline: float | None) -> Iterator[None]:
-        """Per-call HTTP timeout for API reads without mutating ``site.requests``."""
+        """Per-call HTTP timeout for API calls without mutating ``site.requests``."""
         if deadline is None:
             yield
             return
         remaining = self._timeout_remaining(deadline)
-        token: Token[float | None] = _API_REQUEST_TIMEOUT.set(remaining)
+        timeout_token: Token[float | None] = _API_REQUEST_TIMEOUT.set(remaining)
+        active_token: Token[bool] = _API_REQUEST_TIMEOUT_ACTIVE.set(True)
         try:
             yield
         finally:
-            _API_REQUEST_TIMEOUT.reset(token)
+            _API_REQUEST_TIMEOUT_ACTIVE.reset(active_token)
+            _API_REQUEST_TIMEOUT.reset(timeout_token)
 
     def _bot_login(self, cred: Credentials, *, deadline: float | None = None) -> None:
         self._timeout_remaining(deadline)
