@@ -37,8 +37,7 @@ def seed_meeting_pages(fake_client: FakeWikiClient) -> None:
         fake_client.pages[f"{MEETING_TEST_TITLE}:WG{i}"] = FakePage(f"body {i}", i + 2)
     fake_client.allpages = [{"title": MEETING_TEST_TITLE, "ns": 0}]
     fake_client.links[MEETING_TEST_TITLE] = [
-        {"title": f"{MEETING_TEST_TITLE}:WG{i}", "ns": 0}
-        for i in range(MEETING_WG_COUNT)
+        {"title": f"{MEETING_TEST_TITLE}:WG{i}", "ns": 0} for i in range(MEETING_WG_COUNT)
     ]
 
 
@@ -140,9 +139,7 @@ class FakeWikiClient:
             current = self.redirects[current]
         return current, redirected_from
 
-    def fetch_pages(
-        self, titles: list[str], *, timeout: float | None = None
-    ) -> dict[str, FetchedPage]:
+    def fetch_pages(self, titles: list[str], *, timeout: float | None = None) -> dict[str, FetchedPage]:
         self.fetch_calls += 1
         self.fetch_title_batches.append(list(titles))
         out: dict[str, FetchedPage] = {}
@@ -150,9 +147,7 @@ class FakeWikiClient:
             final, redirected_from = self._resolve(req)
             page = self.pages.get(final)
             if page is None:
-                out[req] = FetchedPage(
-                    req, final, redirected_from, None, None, None, None, True
-                )
+                out[req] = FetchedPage(req, final, redirected_from, None, None, None, None, True)
                 continue
             out[req] = FetchedPage(
                 requested_title=req,
@@ -171,9 +166,7 @@ class FakeWikiClient:
         final, redirected_from = self._resolve(title)
         page = self.pages.get(final)
         if page is None:
-            return FetchedPage(
-                title, final, redirected_from, None, None, None, None, True
-            )
+            return FetchedPage(title, final, redirected_from, None, None, None, None, True)
         body = f"== section {section} ==\n{page.content}"
         return FetchedPage(
             requested_title=title,
@@ -186,9 +179,7 @@ class FakeWikiClient:
             missing=False,
         )
 
-    def page_revisions(
-        self, titles: list[str], *, timeout: float | None = None
-    ) -> dict[str, int | None]:
+    def page_revisions(self, titles: list[str], *, timeout: float | None = None) -> dict[str, int | None]:
         self.revision_calls += 1
         out: dict[str, int | None] = {}
         for req in titles:
@@ -197,22 +188,16 @@ class FakeWikiClient:
             out[req] = page.revid if page else None
         return out
 
-    def search(
-        self, query: str, *, limit: int, namespace: int | None, offset: int
-    ) -> dict:
+    def search(self, query: str, *, limit: int, namespace: int | None, offset: int) -> dict:
         window = self.search_results[offset : offset + limit]
         resp: dict = {"query": {"search": window}}
         if offset + limit < len(self.search_results):
             resp["continue"] = {"sroffset": offset + limit}
         return resp
 
-    def list_pages(
-        self, *, namespace: int, prefix: str | None, limit: int, cont: str | None
-    ) -> dict:
+    def list_pages(self, *, namespace: int, prefix: str | None, limit: int, cont: str | None) -> dict:
         start = int(cont) if cont else 0
-        pool = [
-            p for p in self.allpages if (not prefix or p["title"].startswith(prefix))
-        ]
+        pool = [p for p in self.allpages if (not prefix or p["title"].startswith(prefix))]
         window = pool[start : start + limit]
         resp: dict = {"query": {"allpages": window}}
         if start + limit < len(pool):
@@ -230,9 +215,7 @@ class FakeWikiClient:
             resp["continue"] = {"rccontinue": str(start + limit)}
         return resp
 
-    def page_links(
-        self, title: str, *, limit: int, cont: str | None, timeout: float | None = None
-    ) -> dict:
+    def page_links(self, title: str, *, limit: int, cont: str | None, timeout: float | None = None) -> dict:
         self.page_links_calls += 1
         pool = self.links.get(title, [])
         start = int(cont) if cont else 0
