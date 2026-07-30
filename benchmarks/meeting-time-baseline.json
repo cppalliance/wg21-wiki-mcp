@@ -163,9 +163,9 @@
         }
     },
     "commit_info": {
-        "id": "a57fa3a07c8f7ed06ab20adcab6b9a801955830a",
-        "time": "2026-07-02T13:45:21Z",
-        "author_time": "2026-07-02T13:45:21Z",
+        "id": "7be5c84b3bf7a904e417a3398aded3fae9305ade",
+        "time": "2026-07-30T15:35:33Z",
+        "author_time": "2026-07-30T15:35:33Z",
         "dirty": false,
         "project": "wg21-wiki-mcp",
         "branch": "(detached head)"
