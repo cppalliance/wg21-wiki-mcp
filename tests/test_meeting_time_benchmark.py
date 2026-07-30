@@ -2,7 +2,8 @@
 
 Offline fake wiki only. Run selectively::
 
-    pytest tests/test_meeting_time_benchmark.py --benchmark-only
+    pytest tests/test_meeting_time_benchmark.py --benchmark-only --no-cov \\
+      -o addopts= --benchmark-warmup=off --benchmark-min-rounds=5
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ def test_benchmark_meeting_sessions_warm_concurrent(benchmark, fake_client, make
         run_concurrent_meeting_sessions(ctx, join_timeout=10)
         assert fake_client.page_links_calls == 1
 
-    benchmark.pedantic(burst, rounds=5, warmup_rounds=0)
+    benchmark.pedantic(burst, rounds=5, warmup_rounds=2)
 
 
 @pytest.mark.benchmark(group="meeting-time")

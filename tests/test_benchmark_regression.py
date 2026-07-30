@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -99,3 +100,9 @@ def test_committed_baseline_matches_ci_runner(relative_path: str) -> None:
     assert machine["system"] == "Linux"
     assert machine["python_version"].startswith("3.12")
     assert commit["dirty"] is False
+
+    run_at = datetime.fromisoformat(data["datetime"])
+    if run_at.tzinfo is None:
+        run_at = run_at.replace(tzinfo=UTC)
+    commit_at = datetime.fromisoformat(commit["time"].replace("Z", "+00:00"))
+    assert abs(run_at - commit_at) < timedelta(days=1)
