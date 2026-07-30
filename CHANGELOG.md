@@ -17,8 +17,9 @@ for the pre-1.0 API stability policy and deprecation timeline.
   `scripts/check_mwclient_release_age.py` accepts `--waiver-file` / `--waiver-until`.
 - Meeting-time composite latency benchmarks (`tests/test_meeting_time_benchmark.py`),
   committed baseline `benchmarks/meeting-time-baseline.json`, and a CI regression gate
-  in the `benchmark` job (50% mean threshold, same as cache). `get_meeting_overview`
-  is out of scope for this baseline; only `get_meeting_sessions` warm/cold paths.
+  in the `benchmark` job (50% mean threshold, same as cache). Regression checking uses
+  `scripts/check_benchmark_regression.py`. `get_meeting_overview` is out of scope for
+  this baseline; only `get_meeting_sessions` warm/cold paths.
 
 ## [0.3.0] - 2026-07-24
 

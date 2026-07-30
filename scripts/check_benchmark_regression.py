@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Fail when cache benchmark means regress more than a threshold vs baseline.
+"""Fail when benchmark means regress more than a threshold vs a committed baseline.
 
-Compares pytest-benchmark ``--benchmark-json`` output against the committed
-``benchmarks/cache-baseline.json``. Used in CI (see ``cache benchmark`` job).
+Compares pytest-benchmark ``--benchmark-json`` output against a committed baseline
+(e.g. ``benchmarks/cache-baseline.json`` or ``benchmarks/meeting-time-baseline.json``).
+Used in CI (see the ``benchmark`` job).
 """
 
 from __future__ import annotations

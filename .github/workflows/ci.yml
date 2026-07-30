@@ -119,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           check() {
-            python scripts/check_cache_benchmark_regression.py \
+            python scripts/check_benchmark_regression.py \
               benchmark.json benchmarks/cache-baseline.json \
               --max-regression 0.5
           }
@@ -144,10 +144,13 @@ jobs:
             --benchmark-warmup=off \
             --benchmark-min-rounds=5
       - name: Meeting-time benchmark regression gate
+        # Blocking gate. Meeting-time composites are ms-scale on shared runners where
+        # jitter is material; 50% catches genuine regressions (>=1.5x slowdowns) while
+        # tolerating noise. We still re-run once before failing to absorb one-off spikes.
         run: |
           set -euo pipefail
           check_meeting() {
-            python scripts/check_cache_benchmark_regression.py \
+            python scripts/check_benchmark_regression.py \
               meeting-time-benchmark.json benchmarks/meeting-time-baseline.json \
               --max-regression 0.5
           }
