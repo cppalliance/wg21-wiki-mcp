@@ -182,9 +182,11 @@ graph as CI) and commit the result. CI runs on `ubuntu-latest` with Python
 platform-only transitive deps (`colorama`, `pywin32`) that Linux omits.
 
 ```bash
-pip install pip-tools==7.6.0
+python -m pip install "pip>=26,<26.2" pip-tools==7.6.0
 pip-compile pyproject.toml --output-file=requirements-lock.txt --strip-extras
 ```
+
+(`pip-tools` 7.6.0 is incompatible with pip 26.2+ until upstream fixes `stdlib_pkgs` removal.)
 
 ## Branching and releases
 
