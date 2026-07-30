@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -103,6 +103,6 @@ def test_committed_baseline_matches_ci_runner(relative_path: str) -> None:
 
     run_at = datetime.fromisoformat(data["datetime"])
     if run_at.tzinfo is None:
-        run_at = run_at.replace(tzinfo=UTC)
+        run_at = run_at.replace(tzinfo=timezone.utc)
     commit_at = datetime.fromisoformat(commit["time"].replace("Z", "+00:00"))
     assert abs(run_at - commit_at) < timedelta(days=1)
