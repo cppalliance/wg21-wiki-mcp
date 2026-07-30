@@ -60,7 +60,7 @@ jobs:
           python -c "import wg21_wiki_mcp; print(wg21_wiki_mcp.__version__)"
       - name: Verify lockfile is current
         run: |
-          pip install pip-tools==7.5.3
+          pip install pip-tools==7.6.0
           pip-compile pyproject.toml --output-file=requirements-lock.txt --strip-extras
           git diff --exit-code requirements-lock.txt
 

@@ -182,7 +182,7 @@ graph as CI) and commit the result. CI runs on `ubuntu-latest` with Python
 platform-only transitive deps (`colorama`, `pywin32`) that Linux omits.
 
 ```bash
-pip install pip-tools==7.5.3
+pip install pip-tools==7.6.0
 pip-compile pyproject.toml --output-file=requirements-lock.txt --strip-extras
 ```
 
