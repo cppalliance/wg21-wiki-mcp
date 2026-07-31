@@ -40,6 +40,11 @@ pytest -m "not live and not latency_gate"  # offline tests + 95% coverage gate
 pytest -m latency_gate      # meeting-time load/latency gate (ubuntu/py3.12 in CI)
 ```
 
+`shellcheck` is the one tool there that `pip install -e ".[dev]"` does not
+bring in. Install it from a package manager (`apt install shellcheck`,
+`brew install shellcheck`, `choco install shellcheck`) or see the
+[ShellCheck install docs](https://github.com/koalaman/shellcheck#installing).
+
 Regenerate [docs/API.md](docs/API.md) after changing MCP tool signatures,
 docstrings, or public response models:
 

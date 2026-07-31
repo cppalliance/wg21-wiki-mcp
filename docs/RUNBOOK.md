@@ -191,8 +191,11 @@ opaque and tool-specific.
 pull request, while the same tests pass from a maintainer's machine.
 
 **Cause:** Cloudflare blocks GitHub-hosted runner address ranges. Both jobs
-therefore bring up a TorGuard tunnel first, carrying wiki traffic only, and the
-tunnel's exit address can itself land on the blocklist over time.
+therefore bring up a TorGuard tunnel first on any run that sets `VPN_REQUIRED`
+(pushes, same-repo pull requests, and manual dispatches), carrying wiki traffic
+only, and the tunnel's exit address can itself land on the blocklist over time.
+Fork pull requests set neither `VPN_REQUIRED` nor `CI_REQUIRE_LIVE_CREDS`, so
+they build no tunnel and skip on a block rather than reaching this symptom.
 
 **Which failure is it?** The step name says so. `Connect VPN` failing means the
 tunnel never came up, and its message separates a rejected login from a download
@@ -208,14 +211,16 @@ VPN dropped means the tunnel died after `Verify split tunnel` had passed.
 Confirm the new location first, from a machine connected to it:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' \
+curl --max-time 30 -s -o /dev/null -w '%{http_code}\n' \
   'https://wiki.isocpp.org/api.php?action=query&meta=siteinfo&siprop=general&format=json'
 ```
 
-200 means that exit address is clear. The authoritative list of basenames is
-whatever `OpenVPN-UDP-Linux.zip` currently contains; unzip it to read them, or
-set `TORGUARD_VPN_LOCATION` to a name that is not in it and let the resulting
-`Connect VPN` failure print the full list.
+200 means that exit address is clear. `000` means no HTTP response arrived
+within the timeout, which is a stalled or dead route rather than a block, so
+check the connection itself before rejecting the location. The authoritative
+list of basenames is whatever `OpenVPN-UDP-Linux.zip` currently contains; unzip
+it to read them, or set `TORGUARD_VPN_LOCATION` to a name that is not in it and
+let the resulting `Connect VPN` failure print the full list.
 
 Prefer a repository or environment **variable** over a secret for this one. The
 location is not a credential, and as a secret the runner masks it, which blanks
@@ -223,12 +228,14 @@ out the value in exactly the message you would be reading. The workflow accepts
 either, preferring `vars`.
 
 **Diagnosis:** On failure both jobs upload the OpenVPN log as the `vpn-log-live`
-or `vpn-log-canary` artifact. It is written at `--verb 3`, which records the
-handshake and the negotiated cipher but no credentials.
+or `vpn-log-canary` artifact, on the same `VPN_REQUIRED` runs that build the
+tunnel; a run without it has no tunnel and so no log to upload. It is written at
+`--verb 3`, which records the handshake and the negotiated cipher but no
+credentials.
 
-**If TorGuard itself is down:** both jobs go red for reasons unrelated to the
-change under test, because `Connect VPN` cannot fetch the bundle or complete a
-handshake. There is no automatic fallback, since running the live tier unrouted
+**If TorGuard itself is down:** every run that sets `VPN_REQUIRED` goes red for
+reasons unrelated to the change under test, because `Connect VPN` cannot fetch
+the bundle or complete a handshake. There is no automatic fallback, since running the live tier unrouted
 would just fail at Cloudflare instead. Wait for service to come back, then use
 **Re-run failed jobs** on the original run and merge only once `live (secrets)`
 and `canary (secrets)` are green. Re-run that way rather than starting a fresh

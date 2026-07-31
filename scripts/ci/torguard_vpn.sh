@@ -194,7 +194,7 @@ cmd_connect() {
         --log "$LOGFILE" \
         --writepid "$PIDFILE"
 
-    # openvpen --log opens the file 0600 as root, and actions/upload-artifact runs
+    # openvpn --log opens the file 0600 as root, and actions/upload-artifact runs
     # as the runner user, so without this the log the runbook promises on failure
     # never uploads.
     sudo chmod 0644 "$LOGFILE" 2>/dev/null || true
@@ -258,8 +258,15 @@ cmd_verify() {
 
     local status
     status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$API_PROBE" || true)"
+    # curl writes 000 when it never got an HTTP response at all, which the route
+    # check above cannot rule out: the tunnel can drop between the two. Reporting
+    # that as a blocked exit would send an operator rotating locations, which
+    # would not fix it.
+    if [ -z "$status" ] || [ "$status" = "000" ]; then
+        die "no HTTP response from ${WIKI_HOST} through the tunnel within 30s. The routes are installed, so this is a tunnel that dropped or stalled rather than a blocked exit: see the uploaded VPN log and re-run the job."
+    fi
     if [ "$status" != "200" ]; then
-        die "the wiki API returned ${status:-no response} through the tunnel. The tunnel is up and routing correctly, so this TorGuard exit IP is itself WAF-blocked: rotate TORGUARD_VPN_LOCATION to a different location."
+        die "the wiki API returned ${status} through the tunnel. The tunnel is up and routing correctly, so this TorGuard exit IP is itself WAF-blocked: rotate TORGUARD_VPN_LOCATION to a different location."
     fi
     log "wiki API returned 200 over the tunnel"
 }
