@@ -195,6 +195,11 @@ jobs:
           pip install -e ".[dev]"
       - name: Lint (ruff)
         run: ruff check src tests
+      # shellcheck ships with the ubuntu runner image. Unquoted expansions in the
+      # VPN script would otherwise surface as an unexplained live-tier failure.
+      - name: Lint CI shell scripts (shellcheck)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: shellcheck scripts/ci/*.sh
       - name: Type-check (mypy)
         run: mypy src
       - name: Verify API reference is current
@@ -225,10 +230,19 @@ jobs:
   canary:
     name: canary (secrets)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     # Personal wiki credentials live in the live-wiki environment (not repo secrets).
     environment: live-wiki
+    env:
+      CI_REQUIRE_LIVE_CREDS: ${{ (github.event_name == 'push' || (github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork)) && '1' || '' }}
+      # Wider than the gate above on purpose. A manual dispatch can read secrets,
+      # so it should get the tunnel and really exercise the wiki, but it must keep
+      # skipping rather than failing on a block, which is what the narrower gate
+      # decides. Without this a dispatch would run the live tier unrouted, hit
+      # Cloudflare, skip, and report green.
+      VPN_REQUIRED: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork)) && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -240,14 +254,38 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      - name: Connect VPN
+        if: env.VPN_REQUIRED == '1'
+        env:
+          TORGUARD_VPN_USERNAME: ${{ secrets.TORGUARD_VPN_USERNAME }}
+          TORGUARD_VPN_PASSWORD: ${{ secrets.TORGUARD_VPN_PASSWORD }}
+          # Prefer the variable: the location is not a credential, and as a secret
+          # the runner masks it, so "location '***' is not in the bundle" would be
+          # the one message that cannot say what is wrong.
+          TORGUARD_VPN_LOCATION: ${{ vars.TORGUARD_VPN_LOCATION || secrets.TORGUARD_VPN_LOCATION }}
+        run: bash scripts/ci/torguard_vpn.sh connect
+      - name: Verify split tunnel
+        if: env.VPN_REQUIRED == '1'
+        run: bash scripts/ci/torguard_vpn.sh verify
       - name: Canary smoke (login + one read-only tool)
         env:
-          CI_REQUIRE_LIVE_CREDS: ${{ (github.event_name == 'push' || (github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork)) && '1' || '' }}
           WIKI_BOT_USERNAME: ${{ secrets.WIKI_BOT_USERNAME }}
           WIKI_BOT_PASSWORD: ${{ secrets.WIKI_BOT_PASSWORD }}
           WIKI_USER_USERNAME: ${{ secrets.WIKI_USER_USERNAME }}
           WIKI_USER_PASSWORD: ${{ secrets.WIKI_USER_PASSWORD }}
         run: pytest -m canary --no-cov -o log_cli=true --log-cli-level=WARNING
+      # verb 3 records the handshake and the negotiated cipher, never the
+      # credentials, so the log is safe to publish as a build artifact.
+      - name: Upload VPN log
+        if: failure() && env.VPN_REQUIRED == '1'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vpn-log-canary
+          path: ${{ runner.temp }}/torguard-vpn/vpn.log
+          if-no-files-found: ignore
+      - name: Disconnect VPN
+        if: always() && env.VPN_REQUIRED == '1'
+        run: bash scripts/ci/torguard_vpn.sh disconnect
 
   secret-scan:
     name: secret scan (gitleaks)
@@ -299,10 +337,15 @@ jobs:
   live:
     name: live (secrets)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     # Personal wiki credentials live in the live-wiki environment (not repo secrets).
     environment: live-wiki
+    env:
+      # See the canary job for why these two gates differ.
+      CI_REQUIRE_LIVE_CREDS: ${{ (github.event_name == 'push' || (github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork)) && '1' || '' }}
+      VPN_REQUIRED: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork)) && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -314,14 +357,33 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      - name: Connect VPN
+        if: env.VPN_REQUIRED == '1'
+        env:
+          TORGUARD_VPN_USERNAME: ${{ secrets.TORGUARD_VPN_USERNAME }}
+          TORGUARD_VPN_PASSWORD: ${{ secrets.TORGUARD_VPN_PASSWORD }}
+          TORGUARD_VPN_LOCATION: ${{ vars.TORGUARD_VPN_LOCATION || secrets.TORGUARD_VPN_LOCATION }}
+        run: bash scripts/ci/torguard_vpn.sh connect
+      - name: Verify split tunnel
+        if: env.VPN_REQUIRED == '1'
+        run: bash scripts/ci/torguard_vpn.sh verify
       # --no-cov: offline matrix already enforces the 95% package gate and per-module
       # floors; live tests hit the real wiki (slow, credential-bound) and must not emit
       # coverage artifacts that could correlate execution with confidential page access.
       - name: Live tests (fail on protected CI when credentials missing or wiki blocked)
         env:
-          CI_REQUIRE_LIVE_CREDS: ${{ (github.event_name == 'push' || (github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork)) && '1' || '' }}
           WIKI_BOT_USERNAME: ${{ secrets.WIKI_BOT_USERNAME }}
           WIKI_BOT_PASSWORD: ${{ secrets.WIKI_BOT_PASSWORD }}
           WIKI_USER_USERNAME: ${{ secrets.WIKI_USER_USERNAME }}
           WIKI_USER_PASSWORD: ${{ secrets.WIKI_USER_PASSWORD }}
         run: pytest -m live --no-cov -o log_cli=true --log-cli-level=WARNING
+      - name: Upload VPN log
+        if: failure() && env.VPN_REQUIRED == '1'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vpn-log-live
+          path: ${{ runner.temp }}/torguard-vpn/vpn.log
+          if-no-files-found: ignore
+      - name: Disconnect VPN
+        if: always() && env.VPN_REQUIRED == '1'
+        run: bash scripts/ci/torguard_vpn.sh disconnect

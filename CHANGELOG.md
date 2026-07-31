@@ -11,6 +11,17 @@ for the pre-1.0 API stability policy and deprecation timeline.
 ## [Unreleased]
 
 ### Added
+- CI `canary (secrets)` and `live (secrets)` jobs reach the wiki over a TorGuard
+  tunnel (`scripts/ci/torguard_vpn.sh`), because Cloudflare blocks GitHub-hosted
+  runner address ranges. The tunnel is split: only `wiki.isocpp.org` crosses it,
+  so runner traffic keeps its direct path. Runs only where secrets are readable,
+  leaving fork PRs and local runs unaffected. Needs the `TORGUARD_VPN_USERNAME`
+  and `TORGUARD_VPN_PASSWORD` secrets, both readable by the `live-wiki`
+  environment, plus `TORGUARD_VPN_LOCATION`, which the workflow takes from a
+  variable when one is set to a non-empty value and otherwise falls back to a
+  secret of the same name; on failure the OpenVPN log is uploaded as an artifact.
+  Rotation is documented in [docs/RUNBOOK.md](docs/RUNBOOK.md).
+- `shellcheck` lint step for `scripts/ci/*.sh` in the ubuntu/py3.12 `test` job.
 - Dated CI waiver for the `mwclient` 24-month PyPI release-age hard gate
   (`config/mwclient-release-age-waiver.json`, expires **2026-08-13**); tracks
   succession work in issue [#88](https://github.com/cppalliance/wg21-wiki-mcp/issues/88).
@@ -26,6 +37,10 @@ for the pre-1.0 API stability policy and deprecation timeline.
   (`CI_REQUIRE_LIVE_CREDS=1`) when wiki credentials are missing or the live read
   path is blocked (WAF edge or network unreachable); fork PRs and local runs
   without credentials continue to skip gracefully ([#86](https://github.com/cppalliance/wg21-wiki-mcp/issues/86)).
+- A protected-CI edge block now names its own cause. `tests/live_support.py`
+  checks for a tun interface and reports either a tunnel that dropped mid-run or
+  an exit address that is itself blocked. The HTTP status is identical in both
+  cases while the remedies differ.
 
 ## [0.3.0] - 2026-07-24
 

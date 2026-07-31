@@ -33,6 +33,7 @@ hygiene); the test suite runs via `pytest`/CI, not in the commit hook.
 
 ```bash
 ruff check src tests        # lint
+shellcheck scripts/ci/*.sh  # lint the CI shell scripts
 mypy src                    # type-check
 python scripts/build_api_docs.py --check  # API reference matches source
 pytest -m "not live and not latency_gate"  # offline tests + 95% coverage gate
@@ -63,6 +64,37 @@ wiki is unreachable. They must never print or store wiki content. In CI, the
 canary tier (`pytest -m canary --no-cov`) runs bot login plus one read-only tool
 call; the full live tier runs `pytest -m live --no-cov`. Both jobs read
 credentials from the `live-wiki` GitHub environment.
+
+### The live tier needs a VPN in CI
+
+Cloudflare blocks GitHub-hosted runner address ranges, so on protected CI both
+jobs open a TorGuard tunnel before pytest and close it afterwards, via
+`scripts/ci/torguard_vpn.sh`. The tunnel is split: only `wiki.isocpp.org` crosses
+it, and the runner's own traffic (apt, PyPI, the Actions service, artifact
+upload) keeps its direct path, so a slow tunnel cannot stall the job.
+
+This costs you nothing locally or on a fork PR. The VPN steps run only where
+secrets are readable, which is pushes, same-repo pull requests, and manual
+dispatches; everywhere else they are skipped and the live tier keeps skipping as
+it always has. The gate is deliberately one event wider than
+`CI_REQUIRE_LIVE_CREDS`, so a manual dispatch gets a working tunnel while still
+skipping rather than failing on a block.
+
+Three settings drive it, readable by the `live-wiki` environment:
+`TORGUARD_VPN_USERNAME` and `TORGUARD_VPN_PASSWORD` as secrets (VPN credentials,
+not the torguard.net site login), and `TORGUARD_VPN_LOCATION`, the bundle
+basename, as a variable — the workflow prefers a variable but falls back to a
+secret of the same name. A `live` or `canary` job that fails at the wiki edge
+usually needs that last one changed; see
+[docs/RUNBOOK.md](docs/RUNBOOK.md#ci-livecanary-jobs-blocked-at-the-wiki-edge).
+
+The trade-off is worth stating: a TorGuard outage now reddens `develop` and
+`master` for changes that have nothing to do with it. The offline tiers stay
+unaffected, and the runbook covers what to do.
+
+CI lints that script with `shellcheck`, on ubuntu/py3.12 alongside ruff and mypy.
+Run it locally too when you change the script; a shell mistake caught there is a
+lint error, and one that gets through is an unexplained live-tier failure.
 
 ## Testing authentication paths
 

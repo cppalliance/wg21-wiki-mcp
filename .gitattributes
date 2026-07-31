@@ -1,0 +1,4 @@
+# CI shell scripts run on Linux runners. A CRLF checkout makes the shebang line
+# read as `/usr/bin/env bash\r`, which fails with a bare "no such file or
+# directory", so pin them to LF regardless of anyone's core.autocrlf.
+*.sh text eol=lf

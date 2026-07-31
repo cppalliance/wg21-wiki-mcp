@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from pathlib import Path
 
 import pytest
 import requests
@@ -35,6 +36,12 @@ _NETWORK_AUTH_FAILURE_TYPES = frozenset(
     }
 )
 _AUTH_PATH_FAILURE_RE = re.compile(r"\b(?:bot|user): (\w+)")
+
+_NET_INTERFACES = Path("/sys/class/net")
+# Anchored on purpose. The kernel creates a `tunl0` ipip device as soon as that
+# module loads, and reading it as a live tunnel would tell an operator to rotate
+# the VPN location when the tunnel is in fact down.
+_TUN_INTERFACE_RE = re.compile(r"tun\d+")
 
 
 def live_creds_required() -> bool:
@@ -101,6 +108,43 @@ def probe_wiki_waf_block(config: Config) -> tuple[int, str] | None:
     return None
 
 
+def vpn_tunnel_present() -> bool | None:
+    """True/False when a tun interface can be enumerated, ``None`` when it cannot.
+
+    The generator is consumed inside the ``try`` on purpose: :meth:`Path.iterdir`
+    defers its error to first iteration, so hoisting the call out would let the
+    ``OSError`` escape.
+    """
+    try:
+        return any(_TUN_INTERFACE_RE.fullmatch(entry.name) for entry in _NET_INTERFACES.iterdir())
+    except OSError:
+        return None
+
+
+def vpn_state_hint() -> str:
+    """Name the likely cause of an edge block on CI, where a tunnel is expected.
+
+    Protected CI routes wiki traffic over TorGuard, so a block there means one of
+    two unrelated things: this exit address is blocked too, or the tunnel dropped
+    after the workflow verified it. The remedies differ, and the HTTP status alone
+    cannot tell them apart.
+    """
+    tunnel = vpn_tunnel_present()
+    if tunnel is None:
+        return "Could not tell whether the CI VPN is up (no readable interface list)."
+    if tunnel:
+        return (
+            "A tun interface is up, so the VPN connected and this exit address is "
+            "blocked as well: rotate TORGUARD_VPN_LOCATION to another location."
+        )
+    # The workflow's own connect and verify steps have to have passed for pytest to
+    # run at all, so this is a mid-run drop rather than a setup fault.
+    return (
+        "No tun interface is present, so the VPN dropped after the 'Verify split "
+        "tunnel' step passed: see the uploaded VPN log and re-run the job."
+    )
+
+
 def log_waf_edge_skip(status: int, *, url: str) -> None:
     _log.warning(
         "Skipping live/canary tests: wiki edge returned HTTP %s for %s "
@@ -111,12 +155,17 @@ def log_waf_edge_skip(status: int, *, url: str) -> None:
 
 
 def skip_reason_waf_edge(status: int, *, url: str) -> str:
-    return f"wiki edge returned HTTP {status} for {url} (WAF/CDN block of this runner; not a credential fault)"
+    return f"wiki edge returned HTTP {status} for {url} (WAF/CDN block of this runner; not a credential fault)."
 
 
 def _fail_or_skip_live_block(reason: str, *, waf_status: int | None = None, url: str | None = None) -> None:
     """Fail on protected CI; skip gracefully on fork PRs and local runs."""
     if live_creds_required():
+        # The hint reads the tunnel to explain an edge block, so it only belongs on
+        # protected CI (nothing else runs behind the VPN) and only on the WAF path.
+        # Appended to a network fault it would claim a block that never happened.
+        if waf_status is not None:
+            reason = f"{reason} {vpn_state_hint()}"
         pytest.fail(reason)
     if waf_status is not None and url is not None:
         log_waf_edge_skip(waf_status, url=url)
@@ -143,6 +192,7 @@ def ensure_wiki_login(ctx: ServerContext) -> None:
         if auth_error_is_unreachable(exc):
             _fail_or_skip_live_block(
                 "wiki.isocpp.org is unreachable from this shell (network error on all auth paths); "
-                "credentials loaded but TCP/TLS failed — retry when the wiki is reachable or check VPN/proxy"
+                "credentials loaded but TCP/TLS failed. Retry when the wiki is reachable; "
+                "on CI, check whether the VPN dropped mid-run."
             )
         raise
