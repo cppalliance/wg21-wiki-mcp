@@ -210,15 +210,22 @@ def test_live_tier_should_skip_all_combinations(monkeypatch, configured: bool, r
 
 @responses.activate
 def test_ensure_wiki_login_fails_on_waf_probe_when_required(tmp_path, monkeypatch):
+    # The default fixture leaves eth0 only, so the composed message must carry the
+    # dropped-tunnel half of the hint. Asserting the status alone would let the
+    # two halves swap places unnoticed.
     monkeypatch.setenv("CI_REQUIRE_LIVE_CREDS", "1")
     config = _config(tmp_path)
     ctx = ServerContext.create(config)
     responses.add(responses.GET, re.compile(r"https://w\.example/api\.php"), status=403, body="blocked")
     try:
-        with pytest.raises(pytest.fail.Exception, match="HTTP 403"):
+        with pytest.raises(pytest.fail.Exception) as excinfo:
             ensure_wiki_login(ctx)
     finally:
         ctx.close()
+    message = str(excinfo.value)
+    assert "HTTP 403" in message
+    assert "the VPN dropped" in message
+    assert "rotate TORGUARD_VPN_LOCATION" not in message
 
 
 def test_ensure_wiki_login_fails_on_waf_auth_error_when_required(tmp_path, monkeypatch):
@@ -290,7 +297,12 @@ def test_vpn_tunnel_present_none_when_interface_list_is_absent(tmp_path, monkeyp
 
 def test_vpn_state_hint_blames_the_exit_ip_when_the_tunnel_is_up(tmp_path, monkeypatch):
     monkeypatch.setattr("live_support._NET_INTERFACES", _net_dir(tmp_path, "tun0"))
-    assert "rotate TORGUARD_VPN_LOCATION" in vpn_state_hint()
+    hint = vpn_state_hint()
+    assert "rotate TORGUARD_VPN_LOCATION" in hint
+    # An interface name is weak evidence: it shows a tun device exists, not that
+    # the wiki routes still cross it. The hint has to keep saying so, or a reader
+    # who rotates and stays blocked has nowhere to go next.
+    assert "does not prove the wiki routes survived" in hint
 
 
 def test_vpn_state_hint_reports_a_mid_run_drop_when_the_tunnel_is_down(tmp_path, monkeypatch):
@@ -317,6 +329,53 @@ def test_ensure_wiki_login_failure_names_the_vpn_cause_on_protected_ci(tmp_path,
             ensure_wiki_login(ctx)
     finally:
         ctx.close()
+
+
+def _login_blocked_by_the_edge(ctx) -> None:
+    """Make login fail the way a WAF block reaches the AuthError path."""
+
+    def _blocked_login() -> None:
+        raise AuthError("SAML SSO entry point returned HTTP error.; url=https://w.example; status=429")
+
+    ctx.client.login = _blocked_login  # type: ignore[method-assign]
+
+
+def test_auth_error_failure_blames_the_exit_ip_when_the_tunnel_is_up(tmp_path, monkeypatch):
+    # The edge blocks either at the probe or at login, and the two arrive by
+    # different routes through ensure_wiki_login. The hint has to read the same
+    # on both, or the remedy would depend on which one happened to fire first.
+    monkeypatch.setenv("CI_REQUIRE_LIVE_CREDS", "1")
+    monkeypatch.setattr("live_support._NET_INTERFACES", _net_dir(tmp_path, "tun0"))
+    config = _config(tmp_path)
+    ctx = ServerContext.create(config)
+    monkeypatch.setattr("live_support.probe_wiki_waf_block", lambda _config: None)
+    _login_blocked_by_the_edge(ctx)
+    try:
+        with pytest.raises(pytest.fail.Exception) as excinfo:
+            ensure_wiki_login(ctx)
+    finally:
+        ctx.close()
+    message = str(excinfo.value)
+    assert "HTTP 429" in message
+    assert "rotate TORGUARD_VPN_LOCATION" in message
+
+
+def test_auth_error_failure_reports_a_mid_run_drop_when_the_tunnel_is_down(tmp_path, monkeypatch):
+    monkeypatch.setenv("CI_REQUIRE_LIVE_CREDS", "1")
+    monkeypatch.setattr("live_support._NET_INTERFACES", _net_dir(tmp_path, "eth0"))
+    config = _config(tmp_path)
+    ctx = ServerContext.create(config)
+    monkeypatch.setattr("live_support.probe_wiki_waf_block", lambda _config: None)
+    _login_blocked_by_the_edge(ctx)
+    try:
+        with pytest.raises(pytest.fail.Exception) as excinfo:
+            ensure_wiki_login(ctx)
+    finally:
+        ctx.close()
+    message = str(excinfo.value)
+    assert "HTTP 429" in message
+    assert "the VPN dropped" in message
+    assert "rotate TORGUARD_VPN_LOCATION" not in message
 
 
 def test_skip_message_stays_free_of_vpn_advice_off_protected_ci(tmp_path, monkeypatch):

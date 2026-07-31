@@ -37,6 +37,22 @@ API_PROBE="https://${WIKI_HOST}/api.php?action=query&meta=siteinfo&siprop=genera
 log() { printf 'torguard_vpn: %s\n' "$*"; }
 die() { printf 'torguard_vpn: %s\n' "$*" >&2; exit 1; }
 
+# Probe the edge as the tests do. curl's own User-Agent is a different client as
+# far as a UA-keyed rule is concerned, which could pass verify and fail pytest,
+# or the reverse. Asking the package keeps the version from drifting; the
+# fallback only matters when the script runs outside the installed environment,
+# where the product token is the part any such rule would key on anyway.
+probe_user_agent() {
+    local py
+    for py in python python3; do
+        if command -v "$py" >/dev/null 2>&1; then
+            "$py" -c 'from wg21_wiki_mcp.config import default_user_agent; print(default_user_agent())' 2>/dev/null \
+                && return 0
+        fi
+    done
+    printf '%s\n' "wg21-wiki-mcp (+https://github.com/cppalliance/wg21-wiki-mcp)"
+}
+
 # Deliberately not a Cloudflare-fronted service. The split proof rests on this
 # address never landing in the routed set, and wiki.isocpp.org is behind
 # Cloudflare, so a shared anycast range would make the check read the tunnel exit
@@ -62,14 +78,28 @@ remove_hosts_pin() {
     fi
 }
 
-install_openvpn() {
-    if command -v openvpn >/dev/null 2>&1; then
-        log "openvpn already present: $(openvpn --version 2>&1 | head -1 || true)"
-        return
+# Both ship on ubuntu-latest today and neither is guaranteed to tomorrow. unzip
+# is the one that bites quietly: it is used by fetch_config rather than here, so
+# a missing one would surface mid-connect as a bare "command not found".
+install_dependencies() {
+    # Not named `missing`: cmd_connect has a string by that name, and shellcheck
+    # reads the two as one variable and reports the array use as an error.
+    local -a missing_pkgs=()
+    command -v openvpn >/dev/null 2>&1 || missing_pkgs+=(openvpn)
+    command -v unzip >/dev/null 2>&1 || missing_pkgs+=(unzip)
+
+    if [ "${#missing_pkgs[@]}" -gt 0 ]; then
+        log "installing: ${missing_pkgs[*]}"
+        sudo apt-get update -qq
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing_pkgs[@]}"
     fi
-    log "installing openvpn"
-    sudo apt-get update -qq
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends openvpn
+
+    local cmd
+    for cmd in openvpn unzip; do
+        command -v "$cmd" >/dev/null 2>&1 \
+            || die "${cmd} is missing and apt-get did not provide it. The runner image no longer ships it; add it to the install list in this script."
+    done
+    log "openvpn present: $(openvpn --version 2>&1 | head -1 || true)"
 }
 
 fetch_config() {
@@ -138,7 +168,7 @@ cmd_connect() {
     : "${TORGUARD_VPN_LOCATION:?is not set, e.g. TorGuard.USA-MIAMI. ${missing}}"
 
     mkdir -p "$WORK_DIR"
-    install_openvpn
+    install_dependencies
 
     # Record the direct egress address before anything is routed. verify then
     # asserts it is unchanged, which is what proves the tunnel is split rather
@@ -256,8 +286,10 @@ cmd_verify() {
         esac
     done < "$WIKI_IPS_FILE"
 
-    local status
-    status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$API_PROBE" || true)"
+    local agent status
+    agent="$(probe_user_agent)"
+    log "probing the wiki API as '${agent}'"
+    status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -A "$agent" "$API_PROBE" || true)"
     # curl writes 000 when it never got an HTTP response at all, which the route
     # check above cannot rule out: the tunnel can drop between the two. Reporting
     # that as a blocked exit would send an operator rotating locations, which

@@ -111,6 +111,11 @@ def probe_wiki_waf_block(config: Config) -> tuple[int, str] | None:
 def vpn_tunnel_present() -> bool | None:
     """True/False when a tun interface can be enumerated, ``None`` when it cannot.
 
+    This reads interface names, nothing more. A name proves a tunnel device
+    exists, not that it is the CI tunnel or that the wiki addresses still route
+    over it, so :func:`vpn_state_hint` phrases its answer as the likely cause
+    rather than a proven one.
+
     The generator is consumed inside the ``try`` on purpose: :meth:`Path.iterdir`
     defers its error to first iteration, so hoisting the call out would let the
     ``OSError`` escape.
@@ -127,15 +132,19 @@ def vpn_state_hint() -> str:
     Protected CI routes wiki traffic over TorGuard, so a block there means one of
     two unrelated things: this exit address is blocked too, or the tunnel dropped
     after the workflow verified it. The remedies differ, and the HTTP status alone
-    cannot tell them apart.
+    cannot tell them apart. The evidence is an interface name, so the answer names
+    the likelier cause and points at the log for the case it cannot see.
     """
     tunnel = vpn_tunnel_present()
     if tunnel is None:
         return "Could not tell whether the CI VPN is up (no readable interface list)."
     if tunnel:
         return (
-            "A tun interface is up, so the VPN connected and this exit address is "
-            "blocked as well: rotate TORGUARD_VPN_LOCATION to another location."
+            "A tun interface is up, so the tunnel most likely held and this exit "
+            "address is blocked as well: rotate TORGUARD_VPN_LOCATION to another "
+            "location. The interface name does not prove the wiki routes survived, "
+            "so if a fresh location is blocked too, read the uploaded VPN log for "
+            "routes that went away mid-run."
         )
     # The workflow's own connect and verify steps have to have passed for pytest to
     # run at all, so this is a mid-run drop rather than a setup fault.

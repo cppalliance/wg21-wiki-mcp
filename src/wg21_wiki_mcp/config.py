@@ -101,7 +101,13 @@ class Credentials:
     password: str = field(repr=False)  # keep secrets out of repr/print/debug output
 
 
-def _default_user_agent() -> str:
+def default_user_agent() -> str:
+    """Return the User-Agent every wiki request carries.
+
+    Public so that out-of-process callers can send the same one. The CI tunnel
+    check in ``scripts/ci/torguard_vpn.sh`` reads it to probe the edge exactly as
+    the tests do, which a UA-specific rule at the edge would otherwise split.
+    """
     from . import __version__
 
     return f"wg21-wiki-mcp/{__version__} (+https://github.com/cppalliance/wg21-wiki-mcp)"
@@ -122,7 +128,7 @@ class Config:
     ttl_normal_s: int = DEFAULT_TTL_NORMAL_S
     ttl_meeting_s: int = DEFAULT_TTL_MEETING_S
     meeting_window_overrides: list[tuple[date, date]] = field(default_factory=list)
-    user_agent: str = field(default_factory=_default_user_agent)
+    user_agent: str = field(default_factory=default_user_agent)
     saml_username_field: str | None = None
     saml_password_field: str | None = None
     saml_timeout_s: int = DEFAULT_SAML_TIMEOUT_S

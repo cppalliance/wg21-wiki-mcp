@@ -13,8 +13,11 @@ for the pre-1.0 API stability policy and deprecation timeline.
 ### Added
 - CI `canary (secrets)` and `live (secrets)` jobs reach the wiki over a TorGuard
   tunnel (`scripts/ci/torguard_vpn.sh`), because Cloudflare blocks GitHub-hosted
-  runner address ranges. The tunnel is split: only `wiki.isocpp.org` crosses it,
-  so runner traffic keeps its direct path. Runs only where secrets are readable,
+  runner address ranges. This is the infrastructure fix for the root cause found
+  in [#53](https://github.com/cppalliance/wg21-wiki-mcp/issues/53), which was
+  closed on the skip-on-WAF behaviour that kept the blocked runs from being
+  mistaken for credential faults. The tunnel is split: only `wiki.isocpp.org`
+  crosses it, so runner traffic keeps its direct path. Runs only where secrets are readable,
   leaving fork PRs and local runs unaffected. Needs the `TORGUARD_VPN_USERNAME`
   and `TORGUARD_VPN_PASSWORD` secrets, both readable by the `live-wiki`
   environment, plus `TORGUARD_VPN_LOCATION`, which the workflow takes from a
@@ -50,8 +53,8 @@ for the pre-1.0 API stability policy and deprecation timeline.
   scrub nested log `args`, `exc_info`, and pre-formatted `exc_text`.
 - `log.py`: `_install_package_log_safety()` inserts a `_SilentHandler` carrying
   `LogSafetyFilter` first on the `wg21_wiki_mcp` package logger, so propagated
-  records from child loggers—including raw `logging.getLogger("wg21_wiki_mcp.*")`
-  callers—are redacted before any host handler emits.
+  records from child loggers, including raw `logging.getLogger("wg21_wiki_mcp.*")`
+  callers, are redacted before any host handler emits.
 
 ### Changed
 - `pagination.py`: add `cursor_offset()`; malformed or negative offset `o` values
