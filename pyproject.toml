@@ -42,7 +42,7 @@ dev = [
     "mypy>=1.10",
     "types-requests>=2.31",
     "pre-commit>=3.7",
-    "pip-tools==7.6.0",
+    "pip-tools==7.6.1",
 ]
 
 [project.scripts]
