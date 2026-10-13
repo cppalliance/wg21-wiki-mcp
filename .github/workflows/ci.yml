@@ -170,7 +170,7 @@ jobs:
           check_meeting
       - name: Upload benchmark JSON
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: benchmark-json
           path: |
@@ -225,7 +225,7 @@ jobs:
         run: coverage xml -o coverage.xml
       - name: Upload coverage artifact
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-xml
           path: coverage.xml
@@ -281,7 +281,7 @@ jobs:
       # credentials, so the log is safe to publish as a build artifact.
       - name: Upload VPN log
         if: failure() && env.VPN_REQUIRED == '1'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vpn-log-canary
           path: ${{ runner.temp }}/torguard-vpn/vpn.log
@@ -382,7 +382,7 @@ jobs:
         run: pytest -m live --no-cov -o log_cli=true --log-cli-level=WARNING
       - name: Upload VPN log
         if: failure() && env.VPN_REQUIRED == '1'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vpn-log-live
           path: ${{ runner.temp }}/torguard-vpn/vpn.log
